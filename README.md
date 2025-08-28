@@ -2,7 +2,7 @@
 
 [![Play on GitHub Pages](https://img.shields.io/badge/Play%20Now-GitHub%20Pages-brightgreen?logo=github)](https://vavius.github.io/Tycoon3D/)
 
-Live demo: https://vavius.github.io/Tycoon3D/  (откройте и играйте сразу в браузере)
+Live demo: https://vavius.github.io/Tycoon3D/
 
 Procedural low‑poly desert trading game in the browser. Manage caravans, survive heat and thirst, find oases, avoid bandits, and watch the sun, stars and dynamic fog paint the dunes through a full day/night cycle — all in pure JavaScript + raw WebGL2 (no engines, no bundlers).
 

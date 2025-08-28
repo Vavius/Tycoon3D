@@ -674,6 +674,7 @@ log('Добро пожаловать в пустыню. Начинаем тор�
 try {
   const AC = window.AudioContext || window.webkitAudioContext; const actx = new AC(); let started=false;
   const master = actx.createGain(); master.gain.value=0.18; master.connect(actx.destination);
+  window.__audio={actx, master, muted:false};
   // Very light space (single feedback delay)
   const delay = actx.createDelay(); delay.delayTime.value=0.28; const fb=actx.createGain(); fb.gain.value=0.25; delay.connect(fb).connect(delay); delay.connect(master);
   function note(freq, dur){
@@ -697,6 +698,13 @@ try {
       setTimeout(step, gap);
     } step(); }
   window.addEventListener('click', startMusic, {once:true});
+  // Sound toggle button
+  const btn=document.getElementById('toggleSound');
+  if(btn){
+    btn.addEventListener('click', ()=>{
+      const a=window.__audio; if(!a) return; a.muted=!a.muted; master.gain.value = a.muted?0:0.18; btn.textContent = a.muted? 'Unmute' : 'Mute';
+    });
+  }
   // arrival chime
   window.playArrivalChime = function(){
     const t=actx.currentTime; const g=actx.createGain(); g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(0.6,t+0.02); g.gain.exponentialRampToValueAtTime(0.0001,t+0.6); g.connect(master);
