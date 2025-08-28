@@ -2,6 +2,7 @@ export class Input {
   constructor(){
     this.keys = {};
     const capture = ['KeyW','KeyA','KeyS','KeyD','ShiftLeft','ShiftRight','Space','ArrowLeft','ArrowRight','ArrowUp','ArrowDown','KeyP'];
+    const clear = ()=>{ this.keys = {}; };
     window.addEventListener('keydown', e => {
       const k = e.code || e.key;
       this.keys[k] = true; // primary by code
@@ -14,8 +15,10 @@ export class Input {
       this.keys[e.key] = false;
       if(capture.includes(k)) e.preventDefault();
     });
-    window.addEventListener('blur', () => { // avoid stuck keys when window loses focus while pressed
-      this.keys = {};
+    window.addEventListener('blur', clear);
+    document.addEventListener('visibilitychange', ()=>{ if(document.hidden) clear(); });
+    window.addEventListener('contextmenu', ()=>{ // right-click menu can swallow keyup
+      clear();
     });
   }
   isDown(code){ return !!this.keys[code]; }

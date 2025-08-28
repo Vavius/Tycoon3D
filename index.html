@@ -9,17 +9,34 @@
 <body>
   <canvas id="glCanvas"></canvas>
   <div id="hud">
-    <div class="panel left">
+    <div class="panel left" id="mainMenu">
       <h1>Caravan Tycoon</h1>
       <div id="stats"></div>
       <div id="actions">
         <button id="buyCamel">Buy Camel (50)</button>
         <button id="buyCaravan">New Caravan (300)</button>
         <button id="buildInn">Build Caravanserai (200)</button>
-  <button id="toggleSound">Mute</button>
+        <button id="toggleSound">Mute</button>
       </div>
-  <div id="tips">Orbit Cam: Mouse drag rotate, Wheel zoom. W/S move forward/back, A/D strafe, Arrows rotate/tilt, Shift = faster. Space: speed x2 (game). P: pause.</div>
-  <div id="legend"></div>
+      <div id="windowsMenu" class="windows-menu">
+        <button data-win="cities">Города</button>
+        <button data-win="strategy">Стратегия</button>
+        <button data-win="caravans">Караваны</button>
+      </div>
+      <div id="tips">Orbit Cam: Mouse drag rotate, Wheel zoom. W/S move forward/back, A/D strafe, Arrows rotate/tilt, Shift = faster. Space: speed x2 (game). P: pause.</div>
+      <div id="legend"></div>
+    </div>
+    <div class="window" id="win-cities">
+      <div class="titlebar"><span>Города</span><button class="close" data-close="cities">×</button></div>
+      <div class="content" id="citiesView"></div>
+    </div>
+    <div class="window" id="win-strategy">
+      <div class="titlebar"><span>Стратегия</span><button class="close" data-close="strategy">×</button></div>
+      <div class="content"><div class="strategy-grid" id="strategyGrid"></div></div>
+    </div>
+    <div class="window" id="win-caravans">
+      <div class="titlebar"><span>Караваны</span><button class="close" data-close="caravans">×</button></div>
+      <div class="content" id="caravansView"></div>
     </div>
     <div class="panel log" id="log"></div>
   </div>
