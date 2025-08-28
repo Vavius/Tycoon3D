@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Tycoon 3D Game</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <canvas id="glCanvas"></canvas>
+  <div id="hud">
+    <div class="panel left">
+      <h1>Caravan Tycoon</h1>
+      <div id="stats"></div>
+      <div id="actions">
+        <button id="buyCamel">Buy Camel (50)</button>
+        <button id="buyCaravan">New Caravan (300)</button>
+        <button id="buildInn">Build Caravanserai (200)</button>
+      </div>
+  <div id="tips">Orbit Cam: Mouse drag rotate, Wheel zoom. W/S move forward/back, A/D strafe, Arrows rotate/tilt, Shift = faster. Space: speed x2 (game). P: pause.</div>
+  <div id="legend"></div>
+    </div>
+    <div class="panel log" id="log"></div>
+  </div>
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>

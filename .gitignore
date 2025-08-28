@@ -1,0 +1,39 @@
+# Node / tooling (if later added)
+node_modules/
+.npm/
+package-lock.json
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Temporary / cache
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp
+*.log
+.cache/
+
+# Build / dist (future use if bundler introduced)
+dist/
+build/
+
+# IDE / editor
+.vscode/
+.idea/
+*.code-workspace
+
+# Environment / secrets
+.env
+.env.*
+
+# Coverage / tests
+coverage/
+*.lcov
+
+# Misc
+*.bak
+*.old
