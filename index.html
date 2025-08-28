@@ -13,15 +13,11 @@
       <h1>Caravan Tycoon</h1>
       <div id="stats"></div>
       <div id="actions">
-        <button id="buyCamel">Buy Camel (50)</button>
-        <button id="buyCaravan">New Caravan (300)</button>
-        <button id="buildInn">Build Caravanserai (200)</button>
         <button id="toggleSound">Mute</button>
       </div>
       <div id="windowsMenu" class="windows-menu">
-        <button data-win="cities">Города</button>
-        <button data-win="strategy">Стратегия</button>
-        <button data-win="caravans">Караваны</button>
+  <button data-win="cities">Города</button>
+  <button data-win="strategy">Управление</button>
       </div>
       <div id="tips">Orbit Cam: Mouse drag rotate, Wheel zoom. W/S move forward/back, A/D strafe, Arrows rotate/tilt, Shift = faster. Space: speed x2 (game). P: pause.</div>
       <div id="legend"></div>
@@ -31,12 +27,17 @@
       <div class="content" id="citiesView"></div>
     </div>
     <div class="window" id="win-strategy">
-      <div class="titlebar"><span>Стратегия</span><button class="close" data-close="strategy">×</button></div>
-      <div class="content"><div class="strategy-grid" id="strategyGrid"></div></div>
-    </div>
-    <div class="window" id="win-caravans">
-      <div class="titlebar"><span>Караваны</span><button class="close" data-close="caravans">×</button></div>
-      <div class="content" id="caravansView"></div>
+      <div class="titlebar"><span>Управление</span><button class="close" data-close="strategy">×</button></div>
+      <div class="content manage-content">
+        <div id="strategySection">
+          <h3 class="section-head">Стратегия</h3>
+          <div class="strategy-grid" id="strategyGrid"></div>
+        </div>
+        <div id="caravansSection">
+          <h3 class="section-head">Караваны</h3>
+          <div id="caravansView"></div>
+        </div>
+      </div>
     </div>
     <div class="panel log" id="log"></div>
   </div>

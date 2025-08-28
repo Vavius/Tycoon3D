@@ -4,10 +4,13 @@ import { Input } from './core/input.js';
 import { GOODS, strategy, computePrice, updateCityPrices, caravanAutoTrade, recalcWorldGoods, applyCityFlows } from './economy/market.js';
 import { world, genWorld, newCaravan, sampleHeight, CAMEL_MAX, CAMEL_SPACING, makeFaceForUI, baseHeight, worldRender, initWorldGeometry, renderWorldScene } from './world/world.js';
 import { initWindowButtons, updateUI } from './ui/ui.js';
+import { t, localizeStaticDOM } from './core/i18n.js';
+import { initProgression, attachLevelUpHelper, awardXP } from './core/progression.js';
 import { perspective, ident, mul, translate, scale, rotY, rotX } from './math/matrix.js';
+import DesertAmbientAudio from './audio.js';
 
 // === Minimal low-poly tycoon prototype ===
-// Systems: Camera, World grid (desert + oasis), Entities (Caravans, Camels, Inns), Economy loop, Random events, UI, Simple low-poly rendering.
+// Systems: Camera, World grid (desert + oasis), Entities (Caravans, Camels), Economy loop, Random events, UI, Simple low-poly rendering.
 
 const canvas = document.getElementById('glCanvas');
 const gl = createGLContext(canvas);
@@ -100,6 +103,10 @@ function pushBox(arr, x,y,z, sx,sy,sz, color, yaw=0){
 
 
 genWorld();
+// Progression setup
+initProgression(world);
+world.__awardXP = (xp)=>{ awardXP(world, xp); };
+attachLevelUpHelper(world);
 // geometry buffers
 initWorldGeometry(gl);
 // Initial caravan
@@ -107,7 +114,8 @@ newCaravan();
 
 // Economy & events --------------------------------------------
 const events = [];
-function log(msg){ const el=document.getElementById('log'); const div=document.createElement('div'); div.className='entry'; div.textContent=`[${(world.day/24).toFixed(1)}d] ${msg}`; el.appendChild(div); el.scrollTop=el.scrollHeight; }
+function log(msg, cls){ const el=document.getElementById('log'); if(!el) return; const div=document.createElement('div'); div.className='entry'+(cls?(' '+cls):''); const totalHours=world.day; const day=Math.floor(totalHours/24)+1; const hour=Math.floor(totalHours%24); const minute=Math.floor((totalHours-Math.floor(totalHours))*60); const pad=v=>v.toString().padStart(2,'0'); div.textContent=`[D${day} ${pad(hour)}:${pad(minute)}] ${msg}`; el.appendChild(div); el.scrollTop=el.scrollHeight; }
+world.__uiLog = log;
 const logMsg = log; // alias for older calls
 function randomEvent(){
   const r=Math.random();
@@ -124,13 +132,13 @@ function randomEvent(){
   c.cargo[gk].qty--; if(c.cargo[gk].qty<0) c.cargo[gk].qty=0; remaining--; if(remaining<=0) break;
       }
       recalcWorldGoods(world);
-      log(`Песчаная буря уничтожила ${loss} ед. товара.`);
+  log(t('events.stormLost',{loss}));
     }
   } else if(r<0.16){
-    const bonus= Math.floor(40+Math.random()*110); world.money+=bonus; log(`Случайная ярмарка принесла ${bonus}.`);
+    const bonus= Math.floor(40+Math.random()*110); world.money+=bonus; log(t('events.fair',{bonus}));
   } else if(r<0.22 && world.caravans.length>0){
     const c = world.caravans[Math.floor(Math.random()*world.caravans.length)];
-    if(c.camels>0 && Math.random()<0.5){ c.camels--; c.faces.pop(); log(`Верблюд каравана #${c.id} убежал.`); }
+  if(c.camels>1 && Math.random()<0.5){ c.camels--; c.faces.pop(); log(t('events.camelLost',{id:c.id})); }
   }
 }
 // randomCityName handled in world module
@@ -143,9 +151,10 @@ function spawnArrivalEffect(x,z){ world.effects.push({x,z,t:0,dur:0.9}); }
 
 function pickTarget(c){
   // pick a city different from current position (closest oasis) with random choice for now
-  const curCity = world.cities.reduce((best,city)=>{ const d=Math.hypot(city.x-c.x, city.z-c.z); return d<best.d? {d, city}:best; }, {d:1e9, city:null}).city;
+  const availableCities = world.cities.filter(ct=>!ct.locked);
+  const curCity = availableCities.reduce((best,city)=>{ const d=Math.hypot(city.x-c.x, city.z-c.z); return d<best.d? {d, city}:best; }, {d:1e9, city:null}).city;
   let targetCity = curCity;
-  let tries=0; while(targetCity===curCity && tries<8){ targetCity = world.cities[Math.floor(Math.random()*world.cities.length)]; tries++; }
+  let tries=0; while((targetCity===curCity || !targetCity) && tries<12){ targetCity = availableCities[Math.floor(Math.random()*availableCities.length)]; tries++; }
   const from = {x:c.x,z:c.z}; const oasis = {x:targetCity.x, z:targetCity.z};
   const mid = {x:(from.x+oasis.x)/2, z:(from.z+oasis.z)/2};
   const dx=oasis.x-from.x, dz=oasis.z-from.z; const len=Math.hypot(dx,dz);
@@ -155,20 +164,29 @@ function pickTarget(c){
   c.path=pts; c.pathLen=dist; c.t=0; c.state='travel'; c.destCity = targetCity.id; }
 
 function updateCaravan(c,dt){
+  // Track distance moved this frame for XP
+  let prevX=c.x, prevZ=c.z;
   if(c.state==='idle'){
     if(Math.random()<0.02){ pickTarget(c); }
   } else if(c.state==='travel'){
-  const speed = 3 + c.camels*0.1; c.t += speed*dt; if(c.t>=c.pathLen){ c.x=c.path[c.path.length-1].x; c.z=c.path[c.path.length-1].z; c.y= c.path[c.path.length-1].y; c.state='trade'; c.tradeTimer=1.2+Math.random()*0.8; logMsg('Караван торгует...'); spawnArrivalEffect(c.x,c.z); if(typeof playArrivalChime==='function') playArrivalChime(); }
+  const speed = 3 + c.camels*0.1; c.t += speed*dt; if(c.t>=c.pathLen){ c.x=c.path[c.path.length-1].x; c.z=c.path[c.path.length-1].z; c.y= c.path[c.path.length-1].y; c.state='trade'; c.tradeTimer=1.2+Math.random()*0.8; spawnArrivalEffect(c.x,c.z); if(typeof playArrivalChime==='function') playArrivalChime(); }
     else {
       // find segment
       const pts=c.path; let i=1; while(i<pts.length && pts[i].dist < c.t) i++; const a=pts[i-1], b=pts[i]; const segT=(c.t-a.dist)/(b.dist-a.dist); c.x=a.x + (b.x-a.x)*segT; c.z=a.z + (b.z-a.z)*segT; c.y=a.y + (b.y-a.y)*segT; c.yaw = Math.atan2(b.z - a.z, b.x - a.x); }
   } else if(c.state==='trade'){
     c.tradeTimer -= dt; if(c.tradeTimer<=0){
       // perform auto trading based on thresholds at the city reached
-      const city = world.cities.find(ct=>ct.id===c.destCity) || world.cities.reduce((best,ct)=>{ const d=Math.hypot(ct.x-c.x, ct.z-c.z); return d<best.d?{d,city:ct}:best; }, {d:1e9, city:null}).city;
+  const city = world.cities.find(ct=>ct.id===c.destCity && !ct.locked) || world.cities.filter(ct=>!ct.locked).reduce((best,ct)=>{ const d=Math.hypot(ct.x-c.x, ct.z-c.z); return d<best.d?{d,city:ct}:best; }, {d:1e9, city:null}).city;
       if(city){ caravanAutoTrade(c, city, world); recalcWorldGoods(world); }
-      c.state='idle'; logMsg('Торговля завершена.');
+  c.state='idle';
     }
+  }
+  // Award distance XP (only when actually moved)
+  const dx=c.x - prevX, dz=c.z - prevZ; const dist=Math.hypot(dx,dz);
+  if(dist>0 && world.player){
+    // Increased distance XP: 1 XP per 6 units (previously 1 per 30)
+    const xpGain = dist/6;
+    if(world.__awardXP){ world.__awardXP(xpGain); }
   }
 }
 
@@ -179,9 +197,9 @@ function updateBandits(dt){
       // pick nearest caravan
       let target=null, best=1e9; for(const c of world.caravans){ const d=Math.hypot(c.x-b.x, c.z-b.z); if(d<best){ best=d; target=c; } }
       if(target && Math.random()<0.6){
-        const loss = Math.min(world.goods, Math.ceil(10+Math.random()*30)); world.goods-=loss; log(`Бандиты атаковали с лагеря: украли ${loss}.`);
+  const loss = Math.min(world.goods, Math.ceil(10+Math.random()*30)); world.goods-=loss; log(t('events.banditsSteal',{loss}));
       } else {
-        log('Бандиты попытались атаковать, но караваны ушли.');
+  log(t('events.banditsFail'));
       }
       b.raidTimer = 35+Math.random()*30;
     }
@@ -195,16 +213,7 @@ function updateBandits(dt){
 const input = new Input();
 function resize(){ canvas.width=window.innerWidth; canvas.height=window.innerHeight; gl.viewport(0,0,canvas.width,canvas.height); }
 window.addEventListener('resize', resize); resize();
-document.getElementById('buyCamel').onclick=()=>{ if(world.money>=50){
-  // find caravan with least camels under cap
-  let target=null; for(const c of world.caravans){ if(c.camels < CAMEL_MAX && (!target || c.camels < target.camels)) target=c; }
-  if(!target){ log('Нельзя купить: все караваны заполнены (лимит '+CAMEL_MAX+').'); return; }
-  world.money-=50; target.camels++; target.faces.push(makeFaceForUI());
-  // add camel trail entry
-  target.camelTrail.push({offset:(target.camelTrail.length)*CAMEL_SPACING, x:target.x, z:target.z, y:sampleHeight(target.x,target.z), yaw:target.yaw, phase:Math.random()*Math.PI*2});
-  log(`Куплен верблюд. Караван #${target.id}: ${target.camels}.`);} };
-document.getElementById('buyCaravan').onclick=()=>{ if(world.money>=300){ world.money-=300; newCaravan(); }};
-document.getElementById('buildInn').onclick=()=>{ if(world.money>=200){ world.money-=200; const oasis=world.oases[Math.floor(Math.random()*world.oases.length)]; world.inns.push({x:oasis.x,z:oasis.z}); log(`Построен караван-сарай.`);} };
+// buildInn feature removed
 
 
 initWindowButtons();
@@ -255,10 +264,11 @@ loop.onUpdate(dt=>{
   else if(orbit.center.z < -halfBound) orbit.center.z = -halfBound;
   // pause toggle
   if(input.isDown('KeyP')){ world.paused = !world.paused; input.keys['KeyP']=false; }
-  // time progression (day = 24 hours cycle)
-  world.day += dt * world.speed * 0.25; // tune speed
-  // hourly city production/consumption
-  applyCityFlows(world, dt * world.speed);
+  // Unified in‑game hours progression. Previously city flows used dt*speed (4x faster)
+  // than world.day (dt*speed*0.25) causing an initial rapid stock/price swing.
+  const hoursDelta = dt * world.speed * 0.25; // in‑game hours advanced this frame
+  world.day += hoursDelta; // day counter in hours (24 = full day)
+  applyCityFlows(world, hoursDelta); // keep flows consistent with visual day speed
   // caravans
   for(const c of world.caravans){ updateCaravan(c, dt * world.speed); }
   // bandits
@@ -322,48 +332,35 @@ loop.onRender(()=>{
 });
 loop.start();
 
-log('Добро пожаловать в пустыню. Начинаем торговлю.');
+localizeStaticDOM();
+log(t('welcome'));
 
-// Simple quiet single-line desert melody (no drones, no polyphony) -----------------
-try {
-  const AC = window.AudioContext || window.webkitAudioContext; const actx = new AC(); let started=false;
-  const master = actx.createGain(); master.gain.value=0.18; master.connect(actx.destination);
-  window.__audio={actx, master, muted:false};
-  // Very light space (single feedback delay)
-  const delay = actx.createDelay(); delay.delayTime.value=0.28; const fb=actx.createGain(); fb.gain.value=0.25; delay.connect(fb).connect(delay); delay.connect(master);
-  function note(freq, dur){
-    const o=actx.createOscillator(); o.type='sine';
-    const g=actx.createGain(); const t=actx.currentTime; g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(0.9,t+0.02); g.gain.linearRampToValueAtTime(0.7,t+0.08); g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
-    const filt=actx.createBiquadFilter(); filt.type='lowpass'; filt.frequency.value=freq*3; filt.Q.value=0.5;
-    o.frequency.value=freq; o.connect(filt).connect(g); g.connect(master); g.connect(delay); o.start(t); o.stop(t+dur+0.1);
-  }
-  const root=196; // G3
-  const scale=[0,2,3,5,7,10]; // G minor-ish pentatonic with added 10
-  // Base melodic pattern (semitone offsets)
-  const phrase=[0,2,3,5,3,2,0,5,7,5,3,2];
-  function freqFromSemi(semi){ return root*Math.pow(2, semi/12); }
-  function startMusic(){ if(started) return; started=true; let idx=0; function step(){
-      const semi = phrase[idx % phrase.length] + (Math.random()<0.15?12:0); // rare octave jump
-      const f = freqFromSemi(semi);
-      const dur = 0.9 + Math.random()*0.4; // slight variation
-      note(f,dur);
-      idx++;
-      const gap = 650 + Math.random()*250; // ms
-      setTimeout(step, gap);
-    } step(); }
-  window.addEventListener('click', startMusic, {once:true});
-  // Sound toggle button
-  const btn=document.getElementById('toggleSound');
-  if(btn){
-    btn.addEventListener('click', ()=>{
-      const a=window.__audio; if(!a) return; a.muted=!a.muted; master.gain.value = a.muted?0:0.18; btn.textContent = a.muted? 'Unmute' : 'Mute';
-    });
-  }
-  // arrival chime
-  window.playArrivalChime = function(){
-    const t=actx.currentTime; const g=actx.createGain(); g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(0.6,t+0.02); g.gain.exponentialRampToValueAtTime(0.0001,t+0.6); g.connect(master);
-    const o1=actx.createOscillator(); o1.type='triangle'; o1.frequency.setValueAtTime(392,t); // G4
-    const o2=actx.createOscillator(); o2.type='sine'; o2.frequency.setValueAtTime(523.25,t); // C5
-    o1.connect(g); o2.connect(g); o1.start(t); o2.start(t); o1.stop(t+0.6); o2.stop(t+0.6);
-  };
-} catch(e){ }
+// Ambient desert audio integration -------------------------------------------
+const ambientAudio = new DesertAmbientAudio({ seed: 'tycoon', tempo: 64, masterGainDb: -10, root: 'A' });
+ambientAudio.onready = () => { /* ready to start on gesture */ };
+ambientAudio.onerror = (e)=> { console.warn('Audio error', e); };
+// Start on first user gesture
+const gestureStart = () => { ambientAudio.start(); window.removeEventListener('click', gestureStart); window.removeEventListener('keydown', gestureStart); };
+window.addEventListener('click', gestureStart, { once: true });
+window.addEventListener('keydown', gestureStart, { once: true });
+
+// UI toggle button reuse
+const btn = document.getElementById('toggleSound');
+if (btn) {
+  btn.addEventListener('click', () => {
+    if (!ambientAudio.started) { ambientAudio.start(); btn.textContent = t('btn.mute'); return; }
+    if (ambientAudio._muted) { ambientAudio.mute(false); btn.textContent = t('btn.mute'); }
+    else { ambientAudio.mute(true); btn.textContent = t('btn.unmute'); }
+  });
+}
+
+// Arrival chime using same audio context (lightweight dyad)
+window.playArrivalChime = function() {
+  const actx = ambientAudio.context; if (!actx || actx.state !== 'running') return;
+  const t = actx.currentTime; const g = actx.createGain();
+  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.55, t + 0.03); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
+  g.connect(ambientAudio.masterGain);
+  const osc1 = actx.createOscillator(); osc1.type = 'triangle'; osc1.frequency.setValueAtTime(440, t); // A4
+  const osc2 = actx.createOscillator(); osc2.type = 'sine'; osc2.frequency.setValueAtTime(659.25, t); // E5 (fifth)
+  osc1.connect(g); osc2.connect(g); osc1.start(t); osc2.start(t); osc1.stop(t + 0.7); osc2.stop(t + 0.7);
+};

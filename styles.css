@@ -18,6 +18,11 @@ html,body { margin:0; padding:0; height:100%; background:#0d0f11; color:#eee; fo
 #legend .sw { width:14px; height:14px; border-radius:3px; border:1px solid rgba(255,255,255,0.3); }
 #log { font-family: "Consolas", monospace; }
 #log .entry { margin:2px 0; opacity:.9; animation:fadeIn .4s ease; }
+#log .entry.buy { color:#6ecb5a; }
+#log .entry.sell { color:#e89a3c; }
+#log .entry.profit { color:#ffd860; font-weight:600; }
+#log .entry.balance-minus { color:#ff6464; }
+#log .entry.note { color:#7aa0c7; font-style:italic; }
 @keyframes fadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
 ::-webkit-scrollbar { width:10px; }
 ::-webkit-scrollbar-track { background:rgba(0,0,0,0.2); }
@@ -27,21 +32,45 @@ html,body { margin:0; padding:0; height:100%; background:#0d0f11; color:#eee; fo
 .strategy-grid { display:grid; grid-template-columns: repeat(4, auto); gap:4px 6px; font-size:11px; align-items:center; margin-top:4px; }
 .strategy-grid .hdr { font-weight:600; opacity:0.8; }
 .strategy-grid input { width:54px; background:#1c242c; border:1px solid #314253; color:#eee; padding:2px 4px; border-radius:4px; font-size:11px; }
+.num-wrap { position:relative; display:flex; align-items:stretch; }
+.num-wrap input.strategy-num { width:48px; padding-right:16px; }
+.num-wrap .stepper { display:flex; flex-direction:column; position:absolute; right:1px; top:1px; bottom:1px; width:16px; }
+.num-wrap .stepper button { flex:1; background:#24313d; border:0; color:#cbd6df; font-size:9px; line-height:1; cursor:pointer; padding:0; }
+.num-wrap .stepper button:hover { background:#2f4150; }
+.num-wrap .stepper button:active { background:#395064; }
+.strategy-grid input::-webkit-inner-spin-button, .strategy-grid input::-webkit-outer-spin-button { background:#1c242c; opacity:0.6; height:12px; width:12px; }
+.strategy-grid input[type=number] { -moz-appearance: textfield; appearance:textfield; }
+.strategy-grid input:hover::-webkit-inner-spin-button, .strategy-grid input:hover::-webkit-outer-spin-button { opacity:0.9; }
 #citiesView { font-size:11px; display:grid; gap:6px; }
 #citiesView .city { background:rgba(255,255,255,0.05); padding:6px 8px; border-radius:8px; line-height:1.35; position:relative; }
 #citiesView .city .goods { display:grid; grid-template-columns: repeat(3, 1fr); gap:3px; margin-top:4px; }
-#citiesView .city .goods div { background:rgba(255,255,255,0.07); padding:3px 4px; border-radius:4px; text-align:center; font-size:10px; position:relative; }
+/* Goods cell base layout: left icon, right vertical stack (price + stock bar) */
+#citiesView .city .goods div { background:rgba(255,255,255,0.07); padding:4px 6px; border-radius:8px; font-size:10px; position:relative; display:grid; grid-template-columns:20px 1fr; grid-template-rows:auto auto; column-gap:6px; row-gap:2px; align-items:center; line-height:1.15; }
+#citiesView .city .goods div .gicon { grid-row:1 / span 2; grid-column:1; font-size:16px; line-height:1; display:flex; align-items:center; justify-content:center; filter:drop-shadow(0 1px 1px rgba(0,0,0,0.4)); }
 #citiesView .city .goods div.good-buy { box-shadow:0 0 0 2px #2f7f4a inset; background:linear-gradient(#1d3826,#234930); color:#cfeeda; }
 #citiesView .city .goods div.good-sell { box-shadow:0 0 0 2px #b44b24 inset; background:linear-gradient(#4a2318,#5d2c1d); color:#f3d1c4; }
 #citiesView .city .goods div.p-low { background:linear-gradient(#24323b,#1d272f); }
 #citiesView .city .goods div.p-mid { background:linear-gradient(#2c3e49,#25323a); }
 #citiesView .city .goods div.p-high { background:linear-gradient(#3c4854,#303c45); }
-#citiesView .city .goods div .ratioBar { position:relative; display:block; height:3px; background:rgba(255,255,255,0.15); margin-top:2px; border-radius:2px; overflow:hidden; }
-#citiesView .city .goods div .ratioBar span { position:absolute; inset:0; width:0; background:linear-gradient(90deg,#3aa66b,#d4b324,#d46a2c); }
+/* Price line (row 1) */
+#citiesView .city .goods div .price-line { grid-column:2; grid-row:1; font-weight:600; font-size:11px; letter-spacing:0.2px; display:flex; align-items:center; gap:4px; white-space:nowrap; }
+/* Stock bar (row 2) */
+#citiesView .city .goods div .ratioBar { grid-column:2; grid-row:2; position:relative; height:6px; background:rgba(255,255,255,0.18); border-radius:4px; overflow:hidden; }
+.price-line .p-emoji { font-size:0; } /* hidden duplicate for accessibility if needed */
+#citiesView .city .goods div .ratioBar span { position:absolute; inset:0; width:0; background:linear-gradient(90deg,#3aa66b,#d4b324,#d46a2c); transition:width .25s ease; box-shadow:0 0 0 1px rgba(0,0,0,0.25) inset; }
+/* Stock numbers overlay (current / capacity) */
+#citiesView .city .goods div .ratioBar::after { content: attr(data-stock) '/' attr(data-capacity); position:absolute; right:4px; top:50%; transform:translateY(-50%); font-size:9px; font-weight:500; color:#f0f6fa; text-shadow:0 1px 2px #000; letter-spacing:0.3px; }
 #caravansView { font-size:11px; display:grid; gap:6px; }
 #caravansView .car { background:rgba(255,255,255,0.05); padding:6px 8px; border-radius:8px; line-height:1.3; }
+#caravansView .car-head { display:flex; align-items:center; justify-content:space-between; gap:6px; }
+#caravansView button.add-camel { background:#2a333c; border:1px solid #3a4a58; color:#e4d4a8; cursor:pointer; border-radius:6px; font-size:18px; padding:4px 10px; line-height:1; display:flex; align-items:center; gap:4px; }
+#caravansView button.add-camel:hover { background:#34404a; transform:translateY(-1px); }
+#caravansView button.add-camel:active { transform:translateY(0); }
+#caravansView .camel-cap { font-size:11px; opacity:0.75; }
 #caravansView .cargo { display:grid; grid-template-columns: repeat(3, 1fr); gap:3px; margin-top:3px; }
-#caravansView .cargo div { background:rgba(255,255,255,0.07); padding:2px 4px; border-radius:4px; font-size:10px; text-align:center; }
+#caravansView button, #caravansView .add-camel { background:#2a333c; border:1px solid #3a4a58; color:#eee; cursor:pointer; border-radius:6px; font-size:11px; padding:4px 8px; line-height:1; display:inline-flex; align-items:center; gap:4px; }
+#caravansView button:hover:not(:disabled) { background:#34404a; }
+#caravansView button:disabled { opacity:.45; cursor:not-allowed; }
 
 /* Windows */
 .window { position:absolute; top:50px; left:290px; width:340px; max-height:70vh; display:none; flex-direction:column; background:rgba(20,24,28,0.78); backdrop-filter:blur(8px); border:1px solid rgba(255,255,255,0.08); border-radius:10px; box-shadow:0 6px 20px -6px #000; pointer-events:auto; }
@@ -57,7 +86,7 @@ html,body { margin:0; padding:0; height:100%; background:#0d0f11; color:#eee; fo
 .windows-menu button:hover { background:#2d3d4a; }
 .windows-menu button.active { background:#395064; }
 
-/* Price change flash animations */
+/* Price change flash animations (restored) */
 @keyframes flashUp { 0%{box-shadow:0 0 0 0 #3aa66b,0 0 0 0 rgba(58,166,107,0.4);} 30%{box-shadow:0 0 0 2px #3aa66b,0 0 6px 2px rgba(58,166,107,0.4);} 100%{box-shadow:0 0 0 0 #3aa66b,0 0 0 0 rgba(58,166,107,0.0);} }
 @keyframes flashDown { 0%{box-shadow:0 0 0 0 #d46a2c,0 0 0 0 rgba(212,106,44,0.4);} 30%{box-shadow:0 0 0 2px #d46a2c,0 0 6px 2px rgba(212,106,44,0.4);} 100%{box-shadow:0 0 0 0 #d46a2c,0 0 0 0 rgba(212,106,44,0.0);} }
 #citiesView .city .goods div.flash-up { animation:flashUp .9s ease; }
@@ -66,6 +95,28 @@ html,body { margin:0; padding:0; height:100%; background:#0d0f11; color:#eee; fo
 /* Tooltip for price sparkline */
 #priceTooltip { background:rgba(18,22,25,0.92); color:#d6e2eb; padding:6px 8px 8px; border:1px solid rgba(255,255,255,0.08); border-radius:8px; font-size:11px; line-height:1.3; width:max-content; max-width:200px; box-shadow:0 4px 14px -4px #000; }
 #priceTooltip .pt-head { font-weight:600; margin-bottom:4px; font-size:11px; }
+#priceTooltip .pt-line { font-size:10px; line-height:1.25; }
 #priceTooltip svg { display:block; }
+#priceTooltip svg text { font-family:system-ui,Segoe UI,Arial,sans-serif; paint-order:stroke; stroke:#000; stroke-width:2px; stroke-opacity:0.35; }
+.manage-content { display:flex; flex-direction:column; gap:14px; }
+.section-head { margin:4px 0 4px; font-size:13px; letter-spacing:0.5px; font-weight:600; }
+
+/* Compact adjustments (override heights) */
+#citiesView .city .goods div { border-radius:6px; }
+#citiesView .city .goods div .price-line { line-height:1.05; }
+/* ratioBar already placed in grid row 2 now; no absolute positioning */
+
+/* Remove native number spinners globally */
+input[type=number] { -moz-appearance:textfield; appearance:textfield; }
+input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance:none; margin:0; }
+
+/* Level up dialog */
+#levelUpDialog { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%) scale(.85); background:radial-gradient(circle at 30% 30%, rgba(255,220,120,0.25), rgba(40,30,10,0.6)), rgba(20,18,12,0.88); padding:26px 34px 30px; border:1px solid rgba(255,220,120,0.35); border-radius:18px; box-shadow:0 10px 40px -10px rgba(0,0,0,0.6), 0 0 0 2px rgba(255,220,120,0.15); font-family: "Segoe UI", system-ui, sans-serif; text-align:center; color:#f6e8c4; letter-spacing:0.5px; font-size:14px; line-height:1.4; max-width:340px; z-index:500; pointer-events:none; opacity:0; transition:.4s ease; backdrop-filter: blur(10px); }
+#levelUpDialog.show { opacity:1; transform:translate(-50%,-50%) scale(1); }
+#levelUpDialog .lv-head { font-size:24px; font-weight:700; margin-bottom:10px; text-shadow:0 2px 6px rgba(0,0,0,0.5), 0 0 12px rgba(255,220,120,0.4); position:relative; }
+#levelUpDialog .lv-head::after { content:''; position:absolute; left:50%; bottom:-6px; transform:translateX(-50%); width:120px; height:2px; background:linear-gradient(90deg,rgba(255,220,120,0),rgba(255,220,120,0.8),rgba(255,220,120,0)); }
+#levelUpDialog .lv-desc { font-size:15px; font-weight:500; }
+#levelUpDialog::before { content:''; position:absolute; inset:-3px; border-radius:inherit; padding:3px; background:linear-gradient(135deg, rgba(255,220,120,0.55), rgba(255,180,80,0.15), rgba(120,90,30,0.4)); -webkit-mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite:xor; mask-composite:exclude; opacity:0.65; }
+
 
 

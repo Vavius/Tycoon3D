@@ -1,7 +1,7 @@
 export class Input {
   constructor(){
     this.keys = {};
-    const capture = ['KeyW','KeyA','KeyS','KeyD','ShiftLeft','ShiftRight','Space','ArrowLeft','ArrowRight','ArrowUp','ArrowDown','KeyP'];
+  const capture = ['KeyW','KeyA','KeyS','KeyD','ShiftLeft','ShiftRight','ArrowLeft','ArrowRight','ArrowUp','ArrowDown','KeyP'];
     const clear = ()=>{ this.keys = {}; };
     window.addEventListener('keydown', e => {
       const k = e.code || e.key;
