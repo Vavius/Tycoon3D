@@ -112,6 +112,28 @@ initWorldGeometry(gl);
 // Initial caravan
 newCaravan();
 
+// Adjust initial camera to show starting town(s) and first caravan
+// World rendering shifts logical coordinates by -world.size/2, so convert.
+if(world.cities.length && world.caravans.length){
+  const cityA = world.cities[0];
+  // Prefer a different second point (either second unlocked city or the caravan) to widen framing
+  const second = (world.cities[1] && !world.cities[1].locked) ? world.cities[1] : world.caravans[0];
+  const ax = cityA.x - world.size/2, az = cityA.z - world.size/2;
+  const bx = second.x - world.size/2, bz = second.z - world.size/2;
+  // Midpoint between the two reference points
+  orbit.center.x = (ax + bx) * 0.5;
+  orbit.center.z = (az + bz) * 0.5;
+  // Distance scaled to fit both points comfortably
+  const span = Math.hypot(ax - bx, az - bz);
+  const desiredDist = Math.min(orbit.maxDist-2, Math.max(orbit.minDist+1.5, span * 1.4 + 8));
+  orbit.dist = desiredDist;
+  // Yaw so that we look roughly from southwest (gives nice depth) toward scene center
+  // (Only override if using default yaw to avoid clobbering user customizations on reload.)
+  if(Math.abs(orbit.yaw - 0.85) < 0.01){
+    orbit.yaw = 0.95; // slight angle
+  }
+}
+
 // Economy & events --------------------------------------------
 const events = [];
 function log(msg, cls){ const el=document.getElementById('log'); if(!el) return; const div=document.createElement('div'); div.className='entry'+(cls?(' '+cls):''); const totalHours=world.day; const day=Math.floor(totalHours/24)+1; const hour=Math.floor(totalHours%24); const minute=Math.floor((totalHours-Math.floor(totalHours))*60); const pad=v=>v.toString().padStart(2,'0'); div.textContent=`[D${day} ${pad(hour)}:${pad(minute)}] ${msg}`; el.appendChild(div); el.scrollTop=el.scrollHeight; }
@@ -353,6 +375,7 @@ if (btn) {
     else { ambientAudio.mute(true); btn.textContent = t('btn.unmute'); }
   });
 }
+
 
 // Arrival chime using same audio context (lightweight dyad)
 window.playArrivalChime = function() {
