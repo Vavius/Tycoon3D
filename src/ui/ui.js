@@ -26,7 +26,14 @@ export function initWindowButtons(){
   window.addEventListener('mouseup', ()=>{ if(dragTarget){ save(dragTarget); dragTarget=null; } });
 }
 
-export function toggleWindow(key){ const map={ cities:'win-cities', strategy:'win-strategy', upgrades:'win-upgrades'}; const id=map[key]; if(!id) return; const w=document.getElementById(id); if(!w) return; const btn=document.querySelector(`#windowsMenu button[data-win="${key}"]`); const showing=w.classList.toggle('show'); if(btn) btn.classList.toggle('active', showing); if(key==='strategy' && showing){ buildStrategyUI(true); buildCaravansView(); } if(key==='upgrades'&&showing){ buildUpgradesUI(true); } }
+export function toggleWindow(key){
+  const map={ cities:'win-cities', strategy:'win-strategy', upgrades:'win-upgrades'};
+  const id=map[key]; if(!id) return; const w=document.getElementById(id); if(!w) return;
+  const btn=document.querySelector(`#windowsMenu button[data-win="${key}"]`);
+  const showing=w.classList.toggle('show'); if(btn) btn.classList.toggle('active', showing);
+  if(key==='strategy' && showing){ buildStrategyUI(true); buildCaravansView(); }
+  if(key==='upgrades'&&showing){ buildUpgradesUI(true); }
+}
 
 // Shared tooltip for mode cycling (styled similarly to priceTooltip)
 let modeTooltip=document.getElementById('modeTooltip'); if(!modeTooltip){ modeTooltip=document.createElement('div'); modeTooltip.id='modeTooltip'; modeTooltip.style.position='fixed'; modeTooltip.style.pointerEvents='none'; modeTooltip.style.display='none'; document.body.appendChild(modeTooltip); }
@@ -78,101 +85,110 @@ let strategyBuilt=false; function buildStrategyUI(force=false){ if(strategyBuilt
 function formatFlow(city,gid){ const f=city.flows[gid]; if(!f) return ''; const net=(f.prod-f.cons).toFixed(1); return `${net}`; }
 
 let caravansDelegated=false; let caravansLastBuild=0; const CARAVANS_BUILD_INTERVAL=400; // ms
-function buildCaravansView(force=false){
+// While pointer is held down inside specific windows we suppress auto rebuilds that would nuke the element under the cursor
+const uiHoldLock = { upgrades:false, caravans:false };
+
+// Global delegated click handling (simplifies per-window listeners)
+document.addEventListener('click', e => {
+  // Upgrade purchase
+  const upgBtn = e.target.closest('#upgradesView button[data-upg]');
+  if(upgBtn && !upgBtn.disabled){
+    const key = upgBtn.getAttribute('data-upg');
+    purchaseUpgrade(world, key);
+    buildUpgradesUI(true);
+    return;
+  }
+  // Camel add
+  const camelBtn = e.target.closest('#caravansView button.add-camel');
+  if(camelBtn && !camelBtn.disabled){
+    handleAddCamel(camelBtn);
+    return;
+  }
+  // Buy caravan
+  const buyCarBtn = e.target.closest('#caravansView #buyCaravanInline');
+  if(buyCarBtn && !buyCarBtn.disabled){
+    const cost=caravanCost(world); const player=world.player; if(world.money>=cost && world.caravans.length < (player?.maxCaravans||1)){ world.money-=cost; newCaravan(); buildCaravansView(true); }
+  }
+});
+
+// Pointer hold suppression: prevent rebuild during long press (fixes lost click when UI rebuilds mid-hold)
+document.addEventListener('pointerdown', e => {
+  if(e.target.closest('#upgradesView')) uiHoldLock.upgrades = true;
+  if(e.target.closest('#caravansView')) uiHoldLock.caravans = true;
+});
+document.addEventListener('pointerup', () => {
+  if(uiHoldLock.upgrades){ uiHoldLock.upgrades = false; /* schedule refresh if flagged */ if(world.__needsUpgradesRefresh) buildUpgradesUI(true); }
+  if(uiHoldLock.caravans){ uiHoldLock.caravans = false; }
+});
+
+// Extract camel add logic so delegated click can use it
+function handleAddCamel(btn){
+  const id=btn.getAttribute('data-car'); const car=world.caravans.find(c=>c.id==id); if(!car) return;
+  const logEl=document.getElementById('log');
+  function uiLog(m){ if(!logEl) return; const div=document.createElement('div'); div.className='entry'; div.textContent=m; logEl.appendChild(div); logEl.scrollTop=logEl.scrollHeight; }
+  const limit=(world.player?.maxCamelsPerCaravan||1);
+  if(car.camels>=limit){ uiLog(t('caravan.addCamelLimit',{id:car.id, name:(car.name||('#'+car.id))})); return; }
+  const costNow=camelCost(world, car); if(world.money<costNow){ uiLog(t('caravan.addCamelNoMoney',{cost:costNow, name:(car.name||('#'+car.id))})); return; }
+  world.money-=costNow; car.camels++; car.faces.push(':)'); if(car.camelTrail){ car.camelTrail.push({offset:(car.camelTrail.length)*2.2, x:car.x, z:car.z, y:car.y||0, yaw:car.yaw||0, phase:Math.random()*Math.PI*2}); }
+  if(world.player){ world.player.totalCamelsPurchased=(world.player.totalCamelsPurchased||0)+1; }
+  uiLog(t('caravan.addCamelAdded',{id:car.id, name:(car.name||('#'+car.id)), count:car.camels}));
+  buildCaravansView(true);
+}
+export function buildCaravansView(force=false){
   const el=document.getElementById('caravansView'); if(!el) return;
   const now=performance.now();
-  if(!force && (now - caravansLastBuild) < CARAVANS_BUILD_INTERVAL){ return; }
+  if(!force && (now - caravansLastBuild) < CARAVANS_BUILD_INTERVAL) return;
+  if(!force && uiHoldLock.caravans) return; // skip rebuild during active press
   caravansLastBuild=now;
-  let html='';
   const player=world.player;
-  // camelBaseCost now varies per caravan; kept variable for potential global display (unused)
-  const camelBaseCostGlobal = camelCost(world);
+  let html='';
   const caravanBuyCost = caravanCost(world);
   for(const c of world.caravans){
-  const destCityObj = c.destCity ? world.cities.find(ct=>ct.id===c.destCity): null;
-  const destName= destCityObj ? destCityObj.name : '—';
-  // Destination tag intentionally not shown in caravan management per new requirements.
-  const destTag = ''; // (previously displayed city tag)
-  const state=t('caravan.state.'+c.state);
+    const destCityObj = c.destCity ? world.cities.find(ct=>ct.id===c.destCity): null;
+    const destName= destCityObj ? destCityObj.name : '—';
+    const state=t('caravan.state.'+c.state);
     const used=Object.values(c.cargo).reduce((a,b)=>a+(b.qty||0),0);
-  const cap=caravanCapacity(c, world);
-  const camelLimit = (player?.maxCamelsPerCaravan||1);
-  const camelCostThis = camelCost(world, c);
-  let btnDisabled=false; let btnTitle=`${t('btn.addCamel')} (${PRICE_SYMBOL}${camelCostThis})`;
-  if(c.camels >= camelLimit){ btnDisabled=true; btnTitle=t('level.camelLimit',{n:camelLimit}); }
-  else if(world.money < camelCostThis){ btnDisabled=true; btnTitle=t('caravan.addCamelNoMoney',{cost:camelCostThis}); }
-  // Compute current and next speed for improvements popup
-  const speedBonus = world.player?.upgradeStats?.speedBonus||0;
-  const baseSpeed = 3 + Math.pow(c.camels,0.82)*0.35;
-  const effectiveSpeed = baseSpeed * (1+speedBonus);
-  const nextBaseSpeed = 3 + Math.pow(c.camels+1,0.82)*0.35;
-  const nextEffectiveSpeed = nextBaseSpeed * (1+speedBonus);
-  const addCamelBtn = `<button class=\"add-camel\" data-car=\"${c.id}\" title=\"${btnTitle}\" ${btnDisabled?'disabled':''}
-    data-cur-cap='${cap}' data-next-cap='${(c.camels<camelLimit)?caravanCapacity({...c, camels:c.camels+1}, world):''}'
-    data-cur-speed='${effectiveSpeed.toFixed(3)}' data-next-speed='${(c.camels<camelLimit)?nextEffectiveSpeed.toFixed(3):''}'
-    data-cost='${camelCostThis}' data-camel-limit='${camelLimit}'
-  >+🐪 ${PRICE_SYMBOL}${camelCostThis}</button>`;
-  html+=`<div class=\"car\"><div class=\"car-head\"><b>${c.name||('#'+c.id)}</b> ${state} ${addCamelBtn}</div><div>${t('caravan.target')}: ${destName}${destTag}</div><div>${t('caravan.camels')}: ${c.camels}/${camelLimit}</div><div>${t('caravan.speed')}: ${effectiveSpeed.toFixed(2)}</div><div>${t('caravan.capacity')}: ${used}/${cap}</div>`;
-    html+='<div class=\"cargo\">';
+    const cap=caravanCapacity(c, world);
+    const camelLimit = (player?.maxCamelsPerCaravan||1);
+    const camelCostThis = camelCost(world, c);
+    let btnDisabled=false; let btnTitle=`${t('btn.addCamel')} (${PRICE_SYMBOL}${camelCostThis})`;
+    if(c.camels >= camelLimit){ btnDisabled=true; btnTitle=t('level.camelLimit',{n:camelLimit}); }
+    else if(world.money < camelCostThis){ btnDisabled=true; btnTitle=t('caravan.addCamelNoMoney',{cost:camelCostThis}); }
+    const speedBonus = world.player?.upgradeStats?.speedBonus||0;
+    const baseSpeed = 3 + Math.pow(c.camels,0.82)*0.35;
+    const effectiveSpeed = baseSpeed * (1+speedBonus);
+    const nextBaseSpeed = 3 + Math.pow(c.camels+1,0.82)*0.35;
+    const nextEffectiveSpeed = nextBaseSpeed * (1+speedBonus);
+    const addCamelBtn = `<button class="add-camel" data-car="${c.id}" title="${btnTitle}" ${btnDisabled?'disabled':''}
+      data-cur-cap='${cap}' data-next-cap='${(c.camels<camelLimit)?caravanCapacity({...c, camels:c.camels+1}, world):''}'
+      data-cur-speed='${effectiveSpeed.toFixed(3)}' data-next-speed='${(c.camels<camelLimit)?nextEffectiveSpeed.toFixed(3):''}'
+      data-cost='${camelCostThis}' data-camel-limit='${camelLimit}'
+    >+🐪 ${PRICE_SYMBOL}${camelCostThis}</button>`;
+    html+=`<div class="car"><div class="car-head"><b>${c.name||('#'+c.id)}</b> ${state} ${addCamelBtn}</div><div>${t('caravan.target')}: ${destName}</div><div>${t('caravan.camels')}: ${c.camels}/${camelLimit}</div><div>${t('caravan.speed')}: ${effectiveSpeed.toFixed(2)}</div><div>${t('caravan.capacity')}: ${used}/${cap}</div>`;
+    html+='<div class="cargo">';
     for(const gid of Object.keys(GOODS)){
       if(world.player && !world.player.unlockedGoods.includes(gid)) continue;
       const slot=c.cargo[gid];
-      const emoji=GOODS_EMOJI[gid]||''; html+=`<div title=\"avg ${slot.avg.toFixed(1)}\"><span class=\"gicon\">${emoji}</span>${slot.qty}</div>`;
+      const emoji=GOODS_EMOJI[gid]||''; html+=`<div title="avg ${slot.avg.toFixed(1)}"><span class="gicon">${emoji}</span>${slot.qty}</div>`;
     }
     html+='</div></div>';
   }
   const canBuyCaravan = world.caravans.length < (player?.maxCaravans||1);
-  html+=`<div style=\"margin-top:6px;\"><button id=\"buyCaravanInline\" ${world.money>=caravanBuyCost && canBuyCaravan?'':'disabled'}>${canBuyCaravan? t('btn.buyCaravan'): t('btn.caravanLimit')}${canBuyCaravan?` (${PRICE_SYMBOL}${caravanBuyCost})`:''}</button></div>`;
+  html+=`<div style="margin-top:6px;"><button id="buyCaravanInline" ${world.money>=caravanBuyCost && canBuyCaravan?'':'disabled'}>${canBuyCaravan? t('btn.buyCaravan'): t('btn.caravanLimit')}${canBuyCaravan?` (${PRICE_SYMBOL}${caravanBuyCost})`:''}</button></div>`;
   el.innerHTML = html || `<i>${t('caravan.none')}</i>`;
+
+  // Attach tooltip listeners once (click handling moved to global delegate)
   if(!caravansDelegated){
     caravansDelegated=true;
-    el.addEventListener('click', e=>{
-      const btn=e.target.closest('button.add-camel');
-      if(!btn) return;
-      const id=btn.getAttribute('data-car');
-      const car=world.caravans.find(c=>c.id==id);
-      if(window.DEBUG_CAMEL){ console.log('[AddCamel][delegate] Click', {btn, id, found: !!car, camels: car?.camels, limit: world.player?.maxCamelsPerCaravan, money: world.money}); }
-      if(!car){ if(window.DEBUG_CAMEL) console.warn('[AddCamel] Caravan not found for id', id); return; }
-      const logEl=document.getElementById('log');
-      function uiLog(m){ if(!logEl) return; const div=document.createElement('div'); div.className='entry'; div.textContent=m; logEl.appendChild(div); logEl.scrollTop=logEl.scrollHeight; }
-      const limit=(world.player?.maxCamelsPerCaravan||1);
-  if(car.camels>=limit){ if(window.DEBUG_CAMEL) console.log('[AddCamel] Reached camel limit', {carId:car.id, camels:car.camels, limit}); uiLog(t('caravan.addCamelLimit',{id:car.id, name:(car.name||('#'+car.id))})); return; }
-  const costNow = camelCost(world, car);
-  if(world.money<costNow){ if(window.DEBUG_CAMEL) console.log('[AddCamel] Not enough money', {money:world.money, costNow}); uiLog(t('caravan.addCamelNoMoney',{cost:costNow, name:(car.name||('#'+car.id))})); return; }
-      const beforeMoney=world.money; const beforeCamels=car.camels;
-      world.money-=costNow;
-      car.camels++;
-      car.faces.push(':)');
-      if(car.camelTrail){ car.camelTrail.push({offset:(car.camelTrail.length)*2.2, x:car.x, z:car.z, y:car.y||0, yaw:car.yaw||0, phase:Math.random()*Math.PI*2}); }
-      if(world.player){ world.player.totalCamelsPurchased=(world.player.totalCamelsPurchased||0)+1; }
-      if(window.DEBUG_CAMEL){ console.log('[AddCamel] Success', {carId:car.id, beforeCamels, afterCamels:car.camels, beforeMoney, afterMoney:world.money, cost:costNow}); }
-  uiLog(t('caravan.addCamelAdded',{id:car.id, name:(car.name||('#'+car.id)), count:car.camels}));
-      // Force immediate rebuild to update disabled state
-      buildCaravansView(true);
-    });
-  // Camel tooltip (rebuilt)
-  let camelTooltip=document.getElementById('camelTooltip');
-  if(!camelTooltip){ camelTooltip=document.createElement('div'); camelTooltip.id='camelTooltip'; camelTooltip.className='camel-popup'; camelTooltip.style.position='fixed'; camelTooltip.style.pointerEvents='none'; camelTooltip.style.display='none'; document.body.appendChild(camelTooltip); }
-  let camelHideTimer=null; let currentBtn=null;
-  function buildCamelTooltip(btn){
-    const curCap=+btn.getAttribute('data-cur-cap'); const nextCapRaw=btn.getAttribute('data-next-cap'); const curSpeed=parseFloat(btn.getAttribute('data-cur-speed')); const nextSpeedRaw=btn.getAttribute('data-next-speed'); const cost=btn.getAttribute('data-cost');
-    const hasNext= nextCapRaw && nextCapRaw!=='' && nextSpeedRaw && nextSpeedRaw!=='';
-    let lines=[]; if(hasNext){
-      const nextCap=+nextCapRaw; const nextSpeed=parseFloat(nextSpeedRaw);
-      const capDiff=nextCap-curCap; if(capDiff>0){ lines.push(`${t('caravan.capacity')||'Capacity'} <span class='bonus'>+${capDiff}</span>`); }
-      const speedDiff=nextSpeed-curSpeed; if(speedDiff>0.0001){ lines.push(`${t('caravan.speed')||'Speed'} <span class='bonus'>+${speedDiff.toFixed(2)}</span>`); }
-    }
-    const atLimit = !hasNext;
-    if(!lines.length){ lines.push(`<i>${t('caravan.camelLimitShort')||t('caravan.addCamelLimit')||'Camel limit'}</i>`); }
-    const costLine = atLimit? '' : `<div>${t('caravan.cost')||'Cost'}: ${PRICE_SYMBOL}${cost}</div>`;
-    return `<div class='ct-head'><b>${t('caravan.nextCamel')||'New camel'}</b></div><div>${lines.join('</div><div>')}</div>${costLine}`;
+    // Camel tooltip
+    let camelTooltip=document.getElementById('camelTooltip'); if(!camelTooltip){ camelTooltip=document.createElement('div'); camelTooltip.id='camelTooltip'; camelTooltip.className='camel-popup'; camelTooltip.style.position='fixed'; camelTooltip.style.pointerEvents='none'; camelTooltip.style.display='none'; document.body.appendChild(camelTooltip); }
+    let camelHideTimer=null; let currentBtn=null;
+    function buildCamelTooltip(btn){ const curCap=+btn.getAttribute('data-cur-cap'); const nextCapRaw=btn.getAttribute('data-next-cap'); const curSpeed=parseFloat(btn.getAttribute('data-cur-speed')); const nextSpeedRaw=btn.getAttribute('data-next-speed'); const cost=btn.getAttribute('data-cost'); const hasNext= nextCapRaw && nextCapRaw!=='' && nextSpeedRaw && nextSpeedRaw!==''; let lines=[]; if(hasNext){ const nextCap=+nextCapRaw; const nextSpeed=parseFloat(nextSpeedRaw); const capDiff=nextCap-curCap; if(capDiff>0) lines.push(`${t('caravan.capacity')||'Capacity'} <span class='bonus'>+${capDiff}</span>`); const speedDiff=nextSpeed-curSpeed; if(speedDiff>0.0001) lines.push(`${t('caravan.speed')||'Speed'} <span class='bonus'>+${speedDiff.toFixed(2)}</span>`); } const atLimit=!hasNext; if(!lines.length) lines.push(`<i>${t('caravan.camelLimitShort')||t('caravan.addCamelLimit')||'Camel limit'}</i>`); const costLine=atLimit?'' : `<div>${t('caravan.cost')||'Cost'}: ${PRICE_SYMBOL}${cost}</div>`; return `<div class='ct-head'><b>${t('caravan.nextCamel')||'New camel'}</b></div><div>${lines.join('</div><div>')}</div>${costLine}`; }
+    function positionTooltip(btn){ const rect=btn.getBoundingClientRect(); let left=rect.left+rect.width+8; const w=camelTooltip.offsetWidth; if(left + w > window.innerWidth - 8){ left = rect.left - w - 8; } camelTooltip.style.left=left+'px'; camelTooltip.style.top=rect.top+'px'; }
+    el.addEventListener('mouseover', e=>{ const btn=e.target.closest('button.add-camel'); if(!btn) return; currentBtn=btn; camelTooltip.innerHTML=buildCamelTooltip(btn); camelTooltip.style.display='block'; positionTooltip(btn); });
+    el.addEventListener('mousemove', ()=>{ if(!currentBtn || camelTooltip.style.display==='none') return; positionTooltip(currentBtn); });
+    el.addEventListener('mouseout', e=>{ const related=e.relatedTarget; if(currentBtn && (!related || !related.closest || !related.closest('button.add-camel'))){ if(camelHideTimer) clearTimeout(camelHideTimer); camelHideTimer=setTimeout(()=>{ camelTooltip.style.display='none'; currentBtn=null; },120); } });
   }
-  function positionTooltip(btn){ const rect=btn.getBoundingClientRect(); let left=rect.left+rect.width+8; const w=camelTooltip.offsetWidth; if(left + w > window.innerWidth - 8){ left = rect.left - w - 8; } camelTooltip.style.left=left+'px'; camelTooltip.style.top=rect.top+'px'; }
-  el.addEventListener('mouseover', e=>{ const btn=e.target.closest('button.add-camel'); if(!btn) return; currentBtn=btn; camelTooltip.innerHTML=buildCamelTooltip(btn); camelTooltip.style.display='block'; positionTooltip(btn); });
-  el.addEventListener('mousemove', e=>{ if(!currentBtn || camelTooltip.style.display==='none') return; positionTooltip(currentBtn); });
-  el.addEventListener('mouseout', e=>{ const related=e.relatedTarget; if(currentBtn && (!related || !related.closest || !related.closest('button.add-camel'))){ if(camelHideTimer) clearTimeout(camelHideTimer); camelHideTimer=setTimeout(()=>{ camelTooltip.style.display='none'; currentBtn=null; }, 120); } });
-  }
-  const buyBtn=document.getElementById('buyCaravanInline'); if(buyBtn){ buyBtn.addEventListener('click',()=>{ const cost=caravanCost(world); if(world.money>=cost && world.caravans.length < (player?.maxCaravans||1)){ world.money-=cost; newCaravan(); buildCaravansView(); } }); }
 }
 
 // Tooltip for sparkline (reused from main extraction)
@@ -294,7 +310,7 @@ export function updateUI(){
 let upgradesBuilt=false; let upgradesLastBuild=0; const UPGRADES_BUILD_INTERVAL=500;
 function buildUpgradesUI(force=false){
   const el=document.getElementById('upgradesView'); if(!el) return;
-  const now=performance.now(); if(!force && (now - upgradesLastBuild) < UPGRADES_BUILD_INTERVAL) return; upgradesLastBuild=now;
+  const now=performance.now(); if(!force && (now - upgradesLastBuild) < UPGRADES_BUILD_INTERVAL) return; if(!force && uiHoldLock.upgrades) return; upgradesLastBuild=now;
   const p=world.player; if(!p) { el.innerHTML='<i>—</i>'; return; }
   let html='';
   html+='<div class="upg-hint">'+t('upg.hint')+'</div>';
@@ -343,8 +359,5 @@ function buildUpgradesUI(force=false){
     html+='</div></div>';
   }
   el.innerHTML=html;
-  if(!upgradesBuilt){
-    upgradesBuilt=true;
-    el.addEventListener('click', e=>{ const b=e.target.closest('button[data-upg]'); if(!b) return; const key=b.getAttribute('data-upg'); purchaseUpgrade(world, key); buildUpgradesUI(true); });
-  }
+  if(!upgradesBuilt){ upgradesBuilt=true; /* click logic handled globally now */ }
 }
