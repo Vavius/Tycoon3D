@@ -50,7 +50,15 @@ const dict = {
   none: 'No caravans',
   target: 'Target',
   camels: 'Camels',
-  filled: 'Filled'
+  filled: 'Filled',
+  capacity: 'Capacity',
+  speed: 'Speed',
+  speedLabel: 'Speed',
+  nextCamel: 'New camel',
+  improveCapacity: 'Capacity',
+  improveSpeed: 'Speed',
+  cost: 'Cost',
+  camelLimitShort: 'Camel limit'
     },
     goods: { spice: 'Spice', cloth: 'Cloth', ore: 'Ore' },
     stats: {
@@ -155,7 +163,15 @@ const dict = {
   none: 'Нет караванов',
   target: 'Цель',
   camels: 'Верблюды',
-  filled: 'Заполн'
+  filled: 'Заполн',
+  capacity: 'Вместимость',
+  speed: 'Скорость',
+  speedLabel: 'Скорость',
+  nextCamel: 'Новый верблюд',
+  improveCapacity: 'Груз',
+  improveSpeed: 'Скорость',
+  cost: 'Цена',
+  camelLimitShort: 'Лимит верблюдов'
     },
     goods: { spice: 'Пряности', cloth: 'Текстиль', ore: 'Руда' },
     stats: {

@@ -23,6 +23,7 @@ html,body { margin:0; padding:0; height:100%; background:#0d0f11; color:#eee; fo
 #log .entry.profit { color:#ffd860; font-weight:600; }
 #log .entry.balance-minus { color:#ff6464; }
 #log .entry.note { color:#7aa0c7; font-style:italic; }
+#log .entry.camel-loss { color:#ff6038; font-weight:600; }
 @keyframes fadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
 ::-webkit-scrollbar { width:10px; }
 ::-webkit-scrollbar-track { background:rgba(0,0,0,0.2); }
@@ -96,6 +97,10 @@ html,body { margin:0; padding:0; height:100%; background:#0d0f11; color:#eee; fo
 #caravansView button, #caravansView .add-camel { background:#2a333c; border:1px solid #3a4a58; color:#eee; cursor:pointer; border-radius:6px; font-size:11px; padding:4px 8px; line-height:1; display:inline-flex; align-items:center; gap:4px; }
 #caravansView button:hover:not(:disabled) { background:#34404a; }
 #caravansView button:disabled { opacity:.45; cursor:not-allowed; }
+#camelTooltip.camel-popup { background:rgba(18,22,25,0.94); color:#d6e2eb; padding:8px 10px 9px; border:1px solid rgba(255,255,255,0.10); border-radius:10px; font-size:11px; line-height:1.4; max-width:220px; box-shadow:0 8px 24px -8px #000; z-index:9999; }
+#camelTooltip .bonus { color:#55c773; font-weight:600; }
+#camelTooltip i { opacity:0.7; }
+#camelTooltip b { color:#e4d4a8; }
 
 /* Upgrades window styles */
 .upg { background:rgba(255,255,255,0.05); padding:6px 8px 8px; border-radius:8px; margin-bottom:8px; font-size:11px; line-height:1.25; position:relative; }

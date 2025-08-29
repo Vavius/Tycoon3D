@@ -216,10 +216,16 @@ function updateCaravan(c,dt){
     // Camel loss chance (very small per movement frame) scaled by mitigation upgrade.
     // Base rate chosen so that with continuous travel a multi‑camel caravan loses a camel roughly every few in‑game days without mitigation.
     const mitig = world.player?.upgradeStats?.camelLossMitigation||0; // each camelCare level reduces by 15%
-    const camelLossChance = 0.0009 * (1 - mitig); // tuned small probability per update when moving
-    if(c.camels>1 && Math.random()<camelLossChance){
+    // Introduce a per-caravan cooldown to avoid clustered losses.
+    if(c.camelLossCd==null) c.camelLossCd=0;
+    if(c.camelLossCd>0) c.camelLossCd -= dt*world.speed;
+    const baseChance = 0.00055; // lowered base frequency
+    const camelLossChance = baseChance * (1 - mitig); // scaled probability when off cooldown
+    if(c.camels>1 && c.camelLossCd<=0 && Math.random()<camelLossChance){
       c.camels--; c.faces.pop();
-      log(t('events.camelLost',{id:c.id, name:(c.name||('#'+c.id))}));
+      c.camelLossCd = 55 * (1 + mitig*0.6); // cooldown in in‑game seconds (scaled slightly by mitigation)
+      const msg = t('events.camelLost',{id:c.id, name:(c.name||('#'+c.id))});
+      log(msg, 'camel-loss');
       world.effects.push({x:c.x, z:c.z, t:0, dur:0.9, kind:'camelLoss'});
     }
   }

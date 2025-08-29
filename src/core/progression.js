@@ -175,8 +175,16 @@ function upgradeCitySize(world){
 function gidToName(g){ const map={ spice:t('goods.spice'), cloth:t('goods.cloth'), ore:t('goods.ore') }; return map[g]||g; }
 
 // Cost scaling ------------------------------------------------
-export function camelCost(world){
-  const p=world.player; const base=50; const growth=1.35; return Math.round(base * Math.pow(growth, p.totalCamelsPurchased||0));
+// Camel cost scaling now per-caravan (no longer global purchase based).
+// If a caravan is provided, cost scales with (caravan.camels-1) since first camel is free.
+// Fallback to legacy totalCamelsPurchased to avoid breaking any untouched caller paths.
+export function camelCost(world, caravan){
+  const base=50; const growth=1.35;
+  if(caravan){
+    const ownedExtra = Math.max(0,(caravan.camels||1)-1); // camels beyond the free starter
+    return Math.round(base * Math.pow(growth, ownedExtra));
+  }
+  const p=world.player; return Math.round(base * Math.pow(growth, p.totalCamelsPurchased||0));
 }
 export function caravanCost(world){
   const base=300; const growth=1.55; const count=world.caravans.length; return Math.round(base * Math.pow(growth, count));
