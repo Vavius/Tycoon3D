@@ -6,6 +6,7 @@ import { world, genWorld, newCaravan, sampleHeight, CAMEL_MAX, CAMEL_SPACING, ma
 import { initWindowButtons, updateUI } from './ui/ui.js';
 import { t, localizeStaticDOM } from './core/i18n.js';
 import { initProgression, attachLevelUpHelper, awardXP } from './core/progression.js';
+import { applyAllUpgradeEffects } from './core/upgrades.js';
 import { perspective, ident, mul, translate, scale, rotY, rotX } from './math/matrix.js';
 import DesertAmbientAudio from './audio.js';
 
@@ -111,6 +112,8 @@ attachLevelUpHelper(world);
 initWorldGeometry(gl);
 // Initial caravan
 newCaravan();
+// Ensure upgrade effects applied after initial caravan spawn
+applyAllUpgradeEffects(world);
 
 // Adjust initial camera to show starting town(s) and first caravan
 // World rendering shifts logical coordinates by -world.size/2, so convert.
@@ -160,7 +163,7 @@ function randomEvent(){
     const bonus= Math.floor(40+Math.random()*110); world.money+=bonus; log(t('events.fair',{bonus}));
   } else if(r<0.22 && world.caravans.length>0){
     const c = world.caravans[Math.floor(Math.random()*world.caravans.length)];
-  if(c.camels>1 && Math.random()<0.5){ c.camels--; c.faces.pop(); log(t('events.camelLost',{id:c.id})); }
+  // (Camel loss moved to per‑caravan travel handling; keep placeholder in case we add random event variants later.)
   }
 }
 // randomCityName handled in world module
@@ -191,10 +194,11 @@ function updateCaravan(c,dt){
   if(c.state==='idle'){
     if(Math.random()<0.02){ pickTarget(c); }
   } else if(c.state==='travel'){
-  const speed = 3 + c.camels*0.1; c.t += speed*dt; if(c.t>=c.pathLen){ c.x=c.path[c.path.length-1].x; c.z=c.path[c.path.length-1].z; c.y= c.path[c.path.length-1].y; c.state='trade'; c.tradeTimer=1.2+Math.random()*0.8; spawnArrivalEffect(c.x,c.z); if(typeof playArrivalChime==='function') playArrivalChime(); }
+    const base = 3 + Math.pow(c.camels,0.82)*0.35; const speedBonus = world.player?.upgradeStats?.speedBonus||0; const speed = base * (1+speedBonus); c.t += speed*dt; if(c.t>=c.pathLen){ c.x=c.path[c.path.length-1].x; c.z=c.path[c.path.length-1].z; c.y= c.path[c.path.length-1].y; c.state='trade'; c.tradeTimer=1.2+Math.random()*0.8; spawnArrivalEffect(c.x,c.z); if(typeof playArrivalChime==='function') playArrivalChime(); }
     else {
       // find segment
       const pts=c.path; let i=1; while(i<pts.length && pts[i].dist < c.t) i++; const a=pts[i-1], b=pts[i]; const segT=(c.t-a.dist)/(b.dist-a.dist); c.x=a.x + (b.x-a.x)*segT; c.z=a.z + (b.z-a.z)*segT; c.y=a.y + (b.y-a.y)*segT; c.yaw = Math.atan2(b.z - a.z, b.x - a.x); }
+      if(speedBonus>0 && Math.random()<0.18*speedBonus){ world.effects.push({x:c.x, z:c.z, t:0, dur:0.6, kind:'sand'}); }
   } else if(c.state==='trade'){
     c.tradeTimer -= dt; if(c.tradeTimer<=0){
       // perform auto trading based on thresholds at the city reached
@@ -209,6 +213,15 @@ function updateCaravan(c,dt){
     // Increased distance XP: 1 XP per 6 units (previously 1 per 30)
     const xpGain = dist/6;
     if(world.__awardXP){ world.__awardXP(xpGain); }
+    // Camel loss chance (very small per movement frame) scaled by mitigation upgrade.
+    // Base rate chosen so that with continuous travel a multi‑camel caravan loses a camel roughly every few in‑game days without mitigation.
+    const mitig = world.player?.upgradeStats?.camelLossMitigation||0; // each camelCare level reduces by 15%
+    const camelLossChance = 0.0009 * (1 - mitig); // tuned small probability per update when moving
+    if(c.camels>1 && Math.random()<camelLossChance){
+      c.camels--; c.faces.pop();
+      log(t('events.camelLost',{id:c.id, name:(c.name||('#'+c.id))}));
+      world.effects.push({x:c.x, z:c.z, t:0, dur:0.9, kind:'camelLoss'});
+    }
   }
 }
 
@@ -219,7 +232,9 @@ function updateBandits(dt){
       // pick nearest caravan
       let target=null, best=1e9; for(const c of world.caravans){ const d=Math.hypot(c.x-b.x, c.z-b.z); if(d<best){ best=d; target=c; } }
       if(target && Math.random()<0.6){
-  const loss = Math.min(world.goods, Math.ceil(10+Math.random()*30)); world.goods-=loss; log(t('events.banditsSteal',{loss}));
+  let loss = Math.min(world.goods, Math.ceil(10+Math.random()*30));
+        if(loss<1) loss=1; // always some risk
+        world.goods-=loss; log(t('events.banditsSteal',{loss}));
       } else {
   log(t('events.banditsFail'));
       }

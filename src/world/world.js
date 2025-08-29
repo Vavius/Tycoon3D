@@ -1,11 +1,13 @@
 // World generation & entity helpers extracted from main.js
 import { GOODS } from '../economy/market.js';
-import { roleLabel, currentLang } from '../core/i18n.js';
+import { currentLang } from '../core/i18n.js';
 import { ident } from '../math/matrix.js';
 
 export const world = { size:64, tiles:[], oases:[], caravans:[], houses:[], trees:[], money:400, goods:0, day:0, speed:1, paused:false, cities:[], totalProfit:0, lastTradeProfit:0 };
 world.__log = (msg)=>console.log(msg);
 world.bandits = [];
+// Track used caravan name words across current run (reset on world regen)
+const usedCaravanWords = new Set();
 
 // --- Utility sampling (duplicated small helpers kept local) ---
 function hash2d(x,z){ return (Math.sin(x*12.9898 + z*78.233)*43758.5453)%1; }
@@ -64,6 +66,8 @@ export function ensureOasisRadius(city){
 
 export function genWorld(){
   const s=world.size; world.tiles=[]; world.oases=[]; world.houses=[]; world.trees=[];
+  // Reset caravan name uniqueness guard for a fresh world
+  usedCaravanWords.clear();
   const chosenCenters=[]; const MIN_OASIS_DIST=10; function farEnough(nx,nz){ for(const c of chosenCenters){ const dx=c.x-nx, dz=c.z-nz; if(dx*dx+dz*dz < MIN_OASIS_DIST*MIN_OASIS_DIST) return false; } return true; }
   for(let z=0; z<s; z++) for(let x=0; x<s; x++){ const h=baseHeight(x,z); world.tiles.push({x,z,h,oasis:false}); }
   // Try to discover natural oasis candidates
@@ -73,15 +77,56 @@ export function genWorld(){
   // Register oases (all 6)
   for(const c of chosenCenters){ world.oases.push(c); }
   // Pre-create exactly 6 cities (always) – first TWO unlocked at start. Locked cities don't reveal oasis until unlock.
-  world.cities = world.oases.slice(0,6).map((o,i)=>({ id:'city'+i, name: randomCityName(), x:o.x, z:o.z, stocks:Object.fromEntries(Object.keys(GOODS).map(k=>[k, GOODS[k].baseStock])), prices:{}, flows:{}, role:null, focus:null, prevPrices:{}, priceHist:{}, size:sizeForIndex(i), locked: i>1 }));
+  // Tag generator: neutral desert / trade themed descriptors + nouns. Not intentionally comedic.
+  const usedTagWords=new Set();
+  function generateCityTag(){
+    // Helper to attempt building a candidate respecting uniqueness of content words
+    function buildCandidate(){
+      if(currentLang==='ru'){
+        const desc=['Песчаный','Тенистый','Солнечный','Древний','Лунный','Янтарный','Спокойный','Тихий','Пряный','Караванный','Пальмовый','Звёздный','Миражный','Ветреный'];
+        const noun=['Базар','Перевал','Оазис','Колодец','Рынок','Перекрёсток','Приют','Лагерь','Портал','Проход','Удел','Край','Предел'];
+        const pattern=Math.random();
+        if(pattern<0.55){ return desc[Math.floor(Math.random()*desc.length)]+' '+noun[Math.floor(Math.random()*noun.length)]; }
+        else if(pattern<0.80){ return noun[Math.floor(Math.random()*noun.length)]+' Дюн'; }
+        else { return 'Оазис '+desc[Math.floor(Math.random()*desc.length)]; }
+      } else {
+        const desc=['Sand','Shaded','Sun','Ancient','Moon','Amber','Quiet','Calm','Spice','Caravan','Palm','Star','Mirage','Wind','Golden','Hidden','Red','Dune','Copper'];
+        const noun=['Bazaar','Pass','Oasis','Well','Market','Crossroads','Haven','Camp','Gate','Harbor','Reach','Quarter','Rise','Dunes'];
+        const pattern=Math.random();
+        if(pattern<0.50){ return desc[Math.floor(Math.random()*desc.length)]+' '+noun[Math.floor(Math.random()*noun.length)]; }
+        else if(pattern<0.78){ return noun[Math.floor(Math.random()*noun.length)]+' of the '+['Moon','Sun','Spice','Palms','Stars','Trade','Dunes'][Math.floor(Math.random()*7)]; }
+        else { return 'Oasis of '+['Calm','Amber','Winds','Shadows','Echoes','Light'][Math.floor(Math.random()*6)]; }
+      }
+    }
+    const ignoreWords = currentLang==='ru'
+      ? new Set(['Оазис','Дюн'])
+      : new Set(['of','the','Oasis','of the']);
+    for(let attempt=0; attempt<25; attempt++){
+      const cand=buildCandidate();
+      const words=cand.split(/\s+/).map(w=>w.replace(/[^A-Za-zА-Яа-яЁё'-]/g,'')).filter(w=>w && !ignoreWords.has(w));
+      const conflict=words.some(w=>usedTagWords.has(w));
+      if(!conflict){ words.forEach(w=>usedTagWords.add(w)); return cand; }
+      if(attempt===24){ // fallback, accept even with conflicts
+        words.forEach(w=>usedTagWords.add(w));
+        return cand;
+      }
+    }
+  }
+  world.cities = world.oases.slice(0,6).map((o,i)=>({ id:'city'+i, name: randomCityName(), tag: generateCityTag(), x:o.x, z:o.z, stocks:Object.fromEntries(Object.keys(GOODS).map(k=>[k, GOODS[k].baseStock])), prices:{}, flows:{}, role:null, focus:null, prevPrices:{}, priceHist:{}, size:sizeForIndex(i), locked: i>1 }));
   // Reveal starting two cities' oases
   if(world.cities[0]) ensureOasisRadius(world.cities[0]);
   if(world.cities[1]) ensureOasisRadius(world.cities[1]);
   // Place visuals for the two starting cities
   [world.cities[0], world.cities[1]].forEach(startCity=>{ if(!startCity) return; const {houses, trees}=targetCountsForSize(startCity.size); for(let h=0; h<houses; h++){ placeEntityNonOverlapping(world.houses, world.trees, startCity, 'house'); } for(let t=0; t<trees; t++){ placeEntityNonOverlapping(world.trees, world.houses, startCity, 'tree'); } });
   const goodsKeys=Object.keys(GOODS);
-  const ROLES={ PRODUCER:{label:roleLabel('PRODUCER'), prodFocus:0.028, consFocus:0.006, prodOther:0.006, consOther:0.010}, CONSUMER:{label:roleLabel('CONSUMER'), prodFocus:0.006, consFocus:0.028, prodOther:0.004, consOther:0.016}, HUB:{label:roleLabel('HUB'), prodFocus:0.014, consFocus:0.014, prodOther:0.010, consOther:0.012}, SCARCE:{label:roleLabel('SCARCE'), prodFocus:0.004, consFocus:0.020, prodOther:0.003, consOther:0.017} }; const roleCycle=['PRODUCER','CONSUMER','HUB','PRODUCER','SCARCE'];
-  world.cities.forEach((city, idx)=>{ city.role=roleCycle[idx%roleCycle.length]; city.focus=goodsKeys[idx%goodsKeys.length]; goodsKeys.forEach(gid=>{ city.flows[gid]={prod:0,cons:0}; }); const r=ROLES[city.role]; goodsKeys.forEach(gid=>{ const cap=GOODS[gid].capacity; const sizeScale = city.size==='tiny'?0.55: (city.size==='small'?0.78: (city.size==='medium'?1.0:1.18)); const focus=gid===city.focus; const prodRate=focus?r.prodFocus:r.prodOther; const consRate=focus?r.consFocus:r.consOther; city.flows[gid].prod=cap*prodRate*sizeScale; city.flows[gid].cons=cap*consRate*sizeScale; }); });
+  const flowPresets=[
+    {pf:0.028, cf:0.006, po:0.006, co:0.010}, // producer-like
+    {pf:0.006, cf:0.028, po:0.004, co:0.016}, // consumer-like
+    {pf:0.014, cf:0.014, po:0.010, co:0.012}, // hub-like
+    {pf:0.025, cf:0.020, po:0.005, co:0.014}, // mixed
+    {pf:0.004, cf:0.020, po:0.003, co:0.017} // scarce-like
+  ];
+  world.cities.forEach((city, idx)=>{ city.focus=goodsKeys[idx%goodsKeys.length]; const preset=flowPresets[idx%flowPresets.length]; goodsKeys.forEach(gid=>{ city.flows[gid]={prod:0,cons:0}; }); goodsKeys.forEach(gid=>{ const cap=GOODS[gid].capacity; const sizeScale = city.size==='tiny'?0.55: (city.size==='small'?0.78: (city.size==='medium'?1.0:1.18)); const focus=gid===city.focus; const prodRate=focus?preset.pf:preset.po; const consRate=focus?preset.cf:preset.co; city.flows[gid].prod=cap*prodRate*sizeScale; city.flows[gid].cons=cap*consRate*sizeScale; }); });
   // Global initial balancing: previously slightly negative causing gradual depletion.
   // Set small positive/neutral target so stocks don't vanish over time.
   const targetDeltaRatio=0.001; // 0.1% capacity per city aggregate surplus per hour
@@ -168,7 +213,39 @@ export function randomCityName(){
   }
 }
 
-let caravanId=1; function makeFaceSeed(){ const eyes=["^ ^","• •","- -","o o","x x"][Math.floor(Math.random()*5)]; const mouth=["_","~","ᵕ","д","︿"][Math.floor(Math.random()*5)]; return eyes+mouth; }
+let caravanId=1;
+function nextCaravanName(){
+  // Similar approach to city tag uniqueness: ensure no content word repeats across caravan names.
+  function buildCandidate(){
+    if(currentLang==='ru'){
+      const adj=['Песчаный','Быстрый','Тихий','Лунный','Солнечный','Янтарный','Звёздный','Легкий','Дальний','Торговый','Караванный','Шелковый','Ветряной','Ночной'];
+      const noun=['Бегун','Караван','Странник','Вестник','Курьер','След','Путь','Ход','Гонец','Путник'];
+      const tail=['Дюн','Звёзд','Тени','Ветра','Ночи','Специй'];
+      const pattern=Math.random();
+      if(pattern<0.55){ return adj[Math.floor(Math.random()*adj.length)]+' '+noun[Math.floor(Math.random()*noun.length)]; }
+      else if(pattern<0.80){ return noun[Math.floor(Math.random()*noun.length)]+' '+tail[Math.floor(Math.random()*tail.length)]; }
+      else { return 'Караван '+tail[Math.floor(Math.random()*tail.length)]; }
+    } else {
+      const adj=['Dust','Swift','Quiet','Moon','Sun','Amber','Red','Star','Light','Far','Trade','Silk','Wind','Night','Golden','Hidden'];
+      const noun=['Runner','Caravan','Nomad','Courier','Messenger','Trail','Path','Route','Rider','Voyager','Wanderer','Ledger','Track'];
+      const tail=['Dunes','Sands','Stars','Shadows','Winds','Night','Spice','Trade'];
+      const pattern=Math.random();
+      if(pattern<0.50){ return adj[Math.floor(Math.random()*adj.length)]+' '+noun[Math.floor(Math.random()*noun.length)]; }
+      else if(pattern<0.78){ return noun[Math.floor(Math.random()*noun.length)]+' of the '+tail[Math.floor(Math.random()*tail.length)]; }
+      else if(pattern<0.90){ return adj[Math.floor(Math.random()*adj.length)]+' '+tail[Math.floor(Math.random()*tail.length)]; }
+      else { return 'Caravan of '+tail[Math.floor(Math.random()*tail.length)]; }
+    }
+  }
+  const ignore = currentLang==='ru'? new Set(['Караван']) : new Set(['of','the','Caravan']);
+  for(let attempt=0; attempt<30; attempt++){
+    const cand=buildCandidate();
+    const words=cand.split(/\s+/).map(w=>w.replace(/[^A-Za-zА-Яа-яЁё'-]/g,'')).filter(w=>w && !ignore.has(w));
+    const conflict=words.some(w=>usedCaravanWords.has(w));
+    if(!conflict){ words.forEach(w=>usedCaravanWords.add(w)); return cand; }
+    if(attempt===29){ words.forEach(w=>usedCaravanWords.add(w)); return cand; }
+  }
+}
+function makeFaceSeed(){ const eyes=["^ ^","• •","- -","o o","x x"][Math.floor(Math.random()*5)]; const mouth=["_","~","ᵕ","д","︿"][Math.floor(Math.random()*5)]; return eyes+mouth; }
 export function newCaravan(){
   // Prefer spawning at an unlocked city to avoid appearing at hidden (locked) locations.
   const unlockedCities = world.cities.filter(c=>!c.locked);
@@ -178,7 +255,7 @@ export function newCaravan(){
   else if(world.oases.length){ const o=world.oases[0]; spawnX=o.x; spawnZ=o.z; }
   else { spawnX=0; spawnZ=0; }
   const baseCargo={ spice:{qty:0,avg:0}, cloth:{qty:0,avg:0}, ore:{qty:0,avg:0} }; if(world.player){ for(const gid of Object.keys(baseCargo)){ if(!world.player.unlockedGoods.includes(gid)){ baseCargo[gid]={qty:0,avg:0}; } } }
-  const c={ id:caravanId++, x:spawnX, z:spawnZ, camels:1, guardReliability:0.55, goods:0, target:null, timer:0, state:'idle', faces:[], start:{x:spawnX,z:spawnZ}, progress:0, speed:(3+Math.random()*1.5), yaw:0, camelTrail:[], cargo:baseCargo };
+  const c={ id:caravanId++, name: nextCaravanName(), x:spawnX, z:spawnZ, camels:1, guardReliability:0.55, goods:0, target:null, timer:0, state:'idle', faces:[], start:{x:spawnX,z:spawnZ}, progress:0, speed:(3+Math.random()*1.5), yaw:0, camelTrail:[], cargo:baseCargo };
   c.faces.push(makeFaceSeed()); c.camelTrail=[{offset:0,x:c.x,z:c.z,y:sampleHeight(c.x,c.z),yaw:0,phase:Math.random()*Math.PI*2}]; world.caravans.push(c); return c; }
 
 export function sampleHeight(tx,tz){ const maxC=world.size-2; const fx=Math.min(Math.max(tx,0), maxC+0.9999); const fz=Math.min(Math.max(tz,0), maxC+0.9999); const x=Math.floor(fx), z=Math.floor(fz); const lx=fx-x, lz=fz-z; function getTile(x,z){ if(x<0||z<0||x>=world.size||z>=world.size) return {h:0}; return world.tiles[z*world.size + x]; } const h00=getTile(x,z).h, h10=getTile(x+1,z).h, h01=getTile(x,z+1).h, h11=getTile(x+1,z+1).h; const h0=h00+(h10-h00)*lx; const h1=h01+(h11-h01)*lx; return 1.2*(h0+(h1-h0)*lz)-0.05; }
@@ -252,7 +329,10 @@ function buildBackgroundMesh(gl){
 
 function buildInstanced(gl){
   const arr=[];
-  for(const c of world.caravans){ if(!c.camelTrail) c.camelTrail=[]; while(c.camelTrail.length < c.camels) c.camelTrail.push({offset:c.camelTrail.length*CAMEL_SPACING, x:c.x, z:c.z, y:sampleHeight(c.x,c.z), yaw:c.yaw, phase:Math.random()*Math.PI*2}); if(c.state==='travel' && c.path){ for(const camel of c.camelTrail){ const targetDist=Math.max(0,c.t - camel.offset); const pts=c.path; let j=1; while(j<pts.length && pts[j].dist < targetDist) j++; const a=pts[Math.max(0,j-1)], b=pts[Math.min(pts.length-1,j)]; if(!a||!b){ camel.x=c.x; camel.z=c.z; camel.y=c.y; camel.yaw=c.yaw; continue; } const span=(b.dist - a.dist)||1; const segT=Math.min(1, Math.max(0,(targetDist - a.dist)/span)); camel.x=a.x + (b.x-a.x)*segT; camel.z=a.z + (b.z-a.z)*segT; camel.y=a.y + (b.y-a.y)*segT; const yawNow=Math.atan2(b.z-a.z, b.x-a.x); const dy=((yawNow - camel.yaw + Math.PI+Math.PI*4)%(Math.PI*2)) - Math.PI; camel.yaw += dy*0.2; } } else { for(const camel of c.camelTrail){ camel.y = sampleHeight(camel.x, camel.z); } } const time=performance.now()/1000; const traveling=(c.state==='travel'); for(let i=0;i<c.camels;i++){ const camel=c.camelTrail[i]; let baseY=(camel.y||0)+0.05; if(traveling){ const bounce=Math.sin(time*8.0 + camel.phase*0.85)*0.025 + Math.sin(time*12.0 + camel.phase*1.37)*0.012; baseY += bounce; } pushCamel(arr, camel.x - world.size/2, (camel.y||0), camel.z - world.size/2, (camel.yaw||0), baseY, traveling?time:0, traveling?camel.phase:0, traveling?1:0); } }
+  for(const c of world.caravans){ if(!c.camelTrail) c.camelTrail=[]; while(c.camelTrail.length < c.camels) c.camelTrail.push({offset:c.camelTrail.length*CAMEL_SPACING, x:c.x, z:c.z, y:sampleHeight(c.x,c.z), yaw:c.yaw, phase:Math.random()*Math.PI*2}); if(c.state==='travel' && c.path){ for(const camel of c.camelTrail){ const targetDist=Math.max(0,c.t - camel.offset); const pts=c.path; let j=1; while(j<pts.length && pts[j].dist < targetDist) j++; const a=pts[Math.max(0,j-1)], b=pts[Math.min(pts.length-1,j)]; if(!a||!b){ camel.x=c.x; camel.z=c.z; camel.y=c.y; camel.yaw=c.yaw; continue; } const span=(b.dist - a.dist)||1; const segT=Math.min(1, Math.max(0,(targetDist - a.dist)/span)); camel.x=a.x + (b.x-a.x)*segT; camel.z=a.z + (b.z-a.z)*segT; camel.y=a.y + (b.y-a.y)*segT; const yawNow=Math.atan2(b.z-a.z, b.x-a.x); const dy=((yawNow - camel.yaw + Math.PI+Math.PI*4)%(Math.PI*2)) - Math.PI; camel.yaw += dy*0.2; } } else { for(const camel of c.camelTrail){ camel.y = sampleHeight(camel.x, camel.z); } } const time=performance.now()/1000; const traveling=(c.state==='travel'); for(let i=0;i<c.camels;i++){ const camel=c.camelTrail[i]; let baseY=(camel.y||0)+0.05; if(traveling){ const bounce=Math.sin(time*8.0 + camel.phase*0.85)*0.025 + Math.sin(time*12.0 + camel.phase*1.37)*0.012; baseY += bounce; } pushCamel(arr, camel.x - world.size/2, (camel.y||0), camel.z - world.size/2, (camel.yaw||0), baseY, traveling?time:0, traveling?camel.phase:0, traveling?1:0); }
+    // Crate bundle visuals correspond to cargoHarness upgrade level
+    const cargoLevel = world.player?.upgrades?.cargoHarness||0; if(cargoLevel>0){ const baseX=c.camelTrail[0]?c.camelTrail[0].x:c.x; const baseZ=c.camelTrail[0]?c.camelTrail[0].z:c.z; const baseY=(c.camelTrail[0]?c.camelTrail[0].y:sampleHeight(baseX,baseZ))+0.55; const palette=[[0.55,0.42,0.24],[0.60,0.45,0.28],[0.64,0.48,0.30],[0.68,0.50,0.32],[0.55,0.58,0.35],[0.52,0.66,0.55]]; const count=Math.min(cargoLevel,palette.length); for(let k=0;k<count;k++){ const col=palette[k]; const offX=(k-(count-1)/2)*0.55; pushBox(arr, baseX + offX - world.size/2, baseY + (k%2)*0.15, baseZ - world.size/2, 0.5,0.28,0.5, col); } }
+  }
   for(const house of world.houses){
     const city = world.cities.find(c=>c.id===house.city);
     if(city && city.locked) continue; // don't render locked city visuals
@@ -279,7 +359,7 @@ function renderRoutes(gl, program){
 }
 
 function renderEffects(gl, program){
-  const nowEffects=[]; if(!world.effects) return; for(const e of world.effects){ e.t += 1/60; const p=e.t/e.dur; if(p>=1){ continue; } else nowEffects.push(e); const arr=[]; const segs=14; const radius=0.2 + p*1.8; const y=sampleHeight(e.x,e.z)+0.3 + p*0.4; for(let i=0;i<segs;i++){ const a0=(i/segs)*Math.PI*2; const a1=((i+1)/segs)*Math.PI*2; const mx=((Math.cos(a0)+Math.cos(a1))*0.5)*radius; const mz=((Math.sin(a0)+Math.sin(a1))*0.5)*radius; pushBox(arr, e.x + mx - world.size/2, y, e.z + mz - world.size/2, 0.12,0.12,0.12,[1.0,0.85,0.3]); } const f=new Float32Array(arr); const vao=gl.createVertexArray(); gl.bindVertexArray(vao); const vbo=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,vbo); gl.bufferData(gl.ARRAY_BUFFER,f,gl.DYNAMIC_DRAW); const stride=7*4; gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,3,gl.FLOAT,false,stride,0); gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1,3,gl.FLOAT,false,stride,3*4); gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2,1,gl.FLOAT,false,stride,6*4); gl.uniformMatrix4fv(gl.getUniformLocation(program,'uModel'),false,new Float32Array(ident())); gl.drawArrays(gl.TRIANGLES,0,f.length/7); }
+  const nowEffects=[]; if(!world.effects) return; for(const e of world.effects){ e.t += 1/60; const p=e.t/e.dur; if(p>=1){ continue; } else nowEffects.push(e); const arr=[]; const segs = e.kind==='sand'?8:14; const baseRadius = e.kind==='sand'?0.05:0.2; const grow = e.kind==='sand'?0.6:1.8; const radius=baseRadius + p*grow; const yBase=sampleHeight(e.x,e.z); let y = yBase + (e.kind==='camelLoss'?0.4 + p*0.6: (e.kind==='sand'?0.15 + p*0.25:0.3 + p*0.4)); let color=[1.0,0.85,0.3]; if(e.kind==='sand') color=[0.75,0.65,0.45]; else if(e.kind==='camelLoss') color=[1.0,0.45,0.25]; for(let i=0;i<segs;i++){ const a0=(i/segs)*Math.PI*2; const a1=((i+1)/segs)*Math.PI*2; const mx=((Math.cos(a0)+Math.cos(a1))*0.5)*radius; const mz=((Math.sin(a0)+Math.sin(a1))*0.5)*radius; pushBox(arr, e.x + mx - world.size/2, y, e.z + mz - world.size/2, 0.12,0.12,0.12,color); } const f=new Float32Array(arr); const vao=gl.createVertexArray(); gl.bindVertexArray(vao); const vbo=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,vbo); gl.bufferData(gl.ARRAY_BUFFER,f,gl.DYNAMIC_DRAW); const stride=7*4; gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,3,gl.FLOAT,false,stride,0); gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1,3,gl.FLOAT,false,stride,3*4); gl.enableVertexAttribArray(2); gl.vertexAttribPointer(2,1,gl.FLOAT,false,stride,6*4); gl.uniformMatrix4fv(gl.getUniformLocation(program,'uModel'),false,new Float32Array(ident())); gl.drawArrays(gl.TRIANGLES,0,f.length/7); }
   world.effects=nowEffects;
 }
 

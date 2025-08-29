@@ -1,6 +1,7 @@
 // Economy / Market simulation module
 // Defines goods, pricing model, and trading helpers.
 import { t, applyGoodsNames } from '../core/i18n.js';
+import { caravanCapacity } from '../core/upgrades.js';
 
 export const GOODS = {
   spice: { id: 'spice', name: 'spice', minPrice: 30, maxPrice: 90, baseStock: 120, capacity: 240 },
@@ -12,7 +13,13 @@ applyGoodsNames(GOODS);
 // Player strategy thresholds (mutable through UI)
 export const strategy = {
   buyBelow: { spice: 50, cloth: 32, ore: 45 },
-  sellAbove: { spice: 68, cloth: 42, ore: 62 }
+  sellAbove: { spice: 68, cloth: 42, ore: 62 },
+  // Trading mode per good: 'active' | 'hold' | 'disabled' | 'liquidate'
+  // active: normal threshold-based buy & sell
+  // hold: do nothing (keep existing cargo, no buy, no sell)
+  // disabled: ignore (no buy, no sell, thresholds inert)
+  // liquidate: force-sell all current cargo once, then switch to disabled
+  mode: { spice: 'active', cloth: 'active', ore: 'active' }
 };
 
 // Compute dynamic price for a specific city & good based on its stock.
@@ -39,9 +46,8 @@ export function caravanAutoTrade(caravan, city, world){
   updateCityPrices(city);
   // Ensure cargo object
   if(!caravan.cargo){ caravan.cargo = { spice:{qty:0,avg:0}, cloth:{qty:0,avg:0}, ore:{qty:0,avg:0} }; }
-  // capacity per camel
-  const capPerCamel = 10; // tweakable
-  const totalCap = caravan.camels * capPerCamel;
+  // Non-linear capacity with upgrades
+  const totalCap = caravanCapacity(caravan, world);
   const used = Object.values(caravan.cargo).reduce((a,b)=>a+(b.qty||0),0);
   let free = Math.max(0, totalCap - used);
   const uiLog = world.__uiLog || world.__log || console.log;
@@ -49,20 +55,29 @@ export function caravanAutoTrade(caravan, city, world){
   let anySell=false, anyBuy=false;
   let tradeProfit = 0;
 
-  // 1. Sell phase (honor sell thresholds first to free space)
+  // 1. Sell phase (honor modes & thresholds to free space)
   for(const gid of Object.keys(GOODS)){
+    const mode = strategy.mode?.[gid] || 'active';
+    if(mode==='hold' || mode==='disabled') continue; // no selling in these modes
     const slot = caravan.cargo[gid]; const qty = slot.qty; if(qty<=0) continue;
-    const price = city.prices[gid];
-    if(price >= strategy.sellAbove[gid]){
+    let price = city.prices[gid];
+    // Liquidate mode: sell regardless of threshold at current price
+    const forceSell = (mode==='liquidate');
+    // Sell bonus improves revenue (applied as price multiplier for profit calculation)
+    const sellBonus = world.player?.upgradeStats?.sellBonus||0;
+    if(sellBonus>0){ price *= (1+sellBonus); }
+    if(forceSell || price >= strategy.sellAbove[gid]){
       const revenue = qty * price;
       const profit = qty * (price - slot.avg);
-  tradeProfit += profit;
+      tradeProfit += profit;
       world.money += revenue;
       city.stocks[gid] = Math.min(GOODS[gid].capacity, city.stocks[gid] + qty);
       slot.qty = 0; slot.avg = 0;
-  uiLog(t('trade.sold',{id:caravan.id, qty, good:GOODS[gid].name, city:city.name, price:price.toFixed(0), profit:profit.toFixed(0)}), 'sell');
-  if(profit>0) uiLog(t('trade.profit',{profit:profit.toFixed(0)}), 'profit');
-  anySell=true;
+  uiLog(t('trade.sold',{id:caravan.id, name: (caravan.name||('#'+caravan.id)), qty, good:GOODS[gid].name, city:city.name, price:price.toFixed(0), profit:profit.toFixed(0)}), 'sell');
+      if(profit>0) uiLog(t('trade.profit',{profit:profit.toFixed(0)}), 'profit');
+      anySell=true;
+      // After liquidating, switch to disabled so we don't buy again
+      if(forceSell){ strategy.mode[gid] = 'disabled'; }
     }
   }
 
@@ -74,11 +89,15 @@ export function caravanAutoTrade(caravan, city, world){
   if(free>0){
     // Try goods in order of highest upside (difference between sellAbove - current price)
     const order = Object.keys(GOODS).map(gid=>({gid, upside: strategy.sellAbove[gid] - city.prices[gid]}))
-      .filter(o=>city.prices[o.gid] <= strategy.buyBelow[o.gid])
+      .filter(o=>{
+        const mode = strategy.mode?.[o.gid] || 'active';
+        if(mode==='hold' || mode==='disabled' || mode==='liquidate') return false; // no new buys
+        return city.prices[o.gid] <= strategy.buyBelow[o.gid];
+      })
   .filter(o=>{ return !world.player || world.player.unlockedGoods.includes(o.gid); })
       .sort((a,b)=>b.upside - a.upside);
     for(const o of order){
-      if(free<=0) break; const gid=o.gid; const price=city.prices[gid];
+  if(free<=0) break; const gid=o.gid; let price=city.prices[gid];
       if(price > strategy.buyBelow[gid]) continue; // double check
   if(world.player && !world.player.unlockedGoods.includes(gid)) continue; // safety gate
       const avail = city.stocks[gid]; if(avail<=0) continue;
@@ -86,18 +105,21 @@ export function caravanAutoTrade(caravan, city, world){
   // money to fill all free capacity (buyQty * price). This caused caravans with limited
   // funds to buy nothing even when they could afford a partial load. Fix: cap by affordable.
   let buyQty = Math.min(avail, free);
-  const affordable = Math.floor(world.money / price);
+  // Apply buy discount (reduces effective cost)
+  const buyDiscount = world.player?.upgradeStats?.buyDiscount||0;
+  const effectivePrice = price * (1 - buyDiscount);
+  const affordable = Math.floor(world.money / effectivePrice);
   if(affordable <= 0) continue; // can't afford even one unit
   if(buyQty > affordable) buyQty = affordable; // partial fill with what we can afford
-  const cost = buyQty * price;
+  const cost = buyQty * effectivePrice;
       world.money -= cost;
       city.stocks[gid] -= buyQty;
       const slot = caravan.cargo[gid];
       const newQty = slot.qty + buyQty;
-      slot.avg = (slot.avg * slot.qty + buyQty * price) / newQty;
+  slot.avg = (slot.avg * slot.qty + buyQty * price) / newQty; // avg based on base price (not modified by discount)
       slot.qty = newQty;
       free -= buyQty;
-  uiLog(t('trade.bought',{id:caravan.id, qty:buyQty, good:GOODS[gid].name, city:city.name, price:price.toFixed(0)}), 'buy');
+  uiLog(t('trade.bought',{id:caravan.id, name:(caravan.name||('#'+caravan.id)), qty:buyQty, good:GOODS[gid].name, city:city.name, price:price.toFixed(0)}), 'buy');
     anyBuy=true;
     }
   }
@@ -113,7 +135,7 @@ export function caravanAutoTrade(caravan, city, world){
   }
   const delta = world.money - beforeMoney;
   if(delta!==0){ uiLog(t('trade.balance',{delta:(delta>0?'+':'')+delta.toFixed(0)}), delta>0? 'profit':'balance-minus'); }
-  if(!anySell && !anyBuy){ uiLog(t('trade.nothing',{id:caravan.id, city:city.name}), 'note'); }
+  if(!anySell && !anyBuy){ uiLog(t('trade.nothing',{id:caravan.id, name:(caravan.name||('#'+caravan.id)), city:city.name}), 'note'); }
 }
 
 // Helper to aggregate cargo across caravans.
@@ -209,4 +231,24 @@ export function applyCityFlows(world, hoursDelta){
       if(netSum < 0){ const cap=GOODS[gid].capacity; const scale=1 + Math.min(0.15, (-netSum)/(cap*world.cities.length*0.02)); for(const c of world.cities){ c.flows[gid].prod *= scale; } }
     }
   }
+}
+
+// Compute min & max current prices across unlocked (and un-locked) cities for a given good.
+export function currentPriceSpread(world, gid){
+  let min=Infinity, max=-Infinity; const unlocked = !world.player? true: world.player.unlockedGoods.includes(gid);
+  if(!unlocked) return {min:0,max:0};
+  for(const city of world.cities){ if(city.locked) continue; updateCityPrices(city); const p=city.prices[gid]; if(p<min) min=p; if(p>max) max=p; }
+  if(min===Infinity){ min=0; max=0; }
+  return {min, max};
+}
+
+// Profit-oriented thresholds: choose buy slightly above global min and sell slightly below global max to increase trade frequency and margin.
+export function suggestProfitThresholds(world, gid){
+  const {min,max} = currentPriceSpread(world, gid);
+  if(max<=min){ return { buy:min, sell:max+1 }; }
+  const range = max - min;
+  const buy = Math.round(min + range*0.05); // 5% in from min
+  const sell = Math.round(max - range*0.05); // 5% in from max
+  if(sell <= buy){ return { buy, sell: buy+1 }; }
+  return { buy, sell };
 }

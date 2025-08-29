@@ -1,8 +1,10 @@
 // UI & windows logic extracted
-import { GOODS, strategy, updateCityPrices, recalcWorldGoods } from '../economy/market.js';
+import { GOODS, strategy, updateCityPrices, recalcWorldGoods, suggestProfitThresholds } from '../economy/market.js';
 import { t } from '../core/i18n.js';
 import { world, newCaravan } from '../world/world.js';
 import { camelCost, caravanCost, xpForLevel } from '../core/progression.js';
+import { UPGRADE_DEFS, canPurchaseUpgrade, purchaseUpgrade, nextUpgradeCost } from '../core/upgrades.js';
+import { caravanCapacity } from '../core/upgrades.js';
 
 // Debug flags (can be toggled from console: window.DEBUG_CAMEL=true/false)
 window.DEBUG_CAMEL = window.DEBUG_CAMEL ?? true;
@@ -16,7 +18,7 @@ const GOODS_EMOJI = { spice:'🌶️', cloth:'👗', ore:'🪨' };
 export function initWindowButtons(){
   const menu=document.getElementById('windowsMenu'); if(!menu) return;
   menu.querySelectorAll('button[data-win]').forEach(b=> b.addEventListener('click', ()=>toggleWindow(b.dataset.win)) );
-  document.querySelectorAll('.window .close').forEach(c=> c.addEventListener('click', ()=>{ const k=c.dataset.close; const map={cities:'win-cities',strategy:'win-strategy',caravans:'win-caravans'}; const w=document.getElementById(map[k]); if(w){ w.classList.remove('show'); const btn=document.querySelector(`#windowsMenu button[data-win="${k}"]`); if(btn) btn.classList.remove('active'); } }) );
+  document.querySelectorAll('.window .close').forEach(c=> c.addEventListener('click', ()=>{ const k=c.dataset.close; const map={cities:'win-cities',strategy:'win-strategy',upgrades:'win-upgrades',caravans:'win-caravans'}; const w=document.getElementById(map[k]); if(w){ w.classList.remove('show'); const btn=document.querySelector(`#windowsMenu button[data-win="${k}"]`); if(btn) btn.classList.remove('active'); } }) );
   // drag persistence
   const wins=document.querySelectorAll('.window'); let dragTarget=null, offX=0, offY=0; let zTop=50; function save(el){ localStorage.setItem('winpos-'+el.id, JSON.stringify({left:el.style.left, top:el.style.top})); }
   wins.forEach(w=>{ const saved=localStorage.getItem('winpos-'+w.id); if(saved){ try{ const r=JSON.parse(saved); if(r.left&&r.top){ w.style.left=r.left; w.style.top=r.top; } }catch(e){} } const tb=w.querySelector('.titlebar'); if(!tb) return; tb.style.cursor='move'; tb.addEventListener('mousedown', e=>{ dragTarget=w; const rect=w.getBoundingClientRect(); offX=e.clientX-rect.left; offY=e.clientY-rect.top; w.style.zIndex=++zTop; }); });
@@ -24,12 +26,54 @@ export function initWindowButtons(){
   window.addEventListener('mouseup', ()=>{ if(dragTarget){ save(dragTarget); dragTarget=null; } });
 }
 
-export function toggleWindow(key){ const map={ cities:'win-cities', strategy:'win-strategy'}; const id=map[key]; if(!id) return; const w=document.getElementById(id); if(!w) return; const btn=document.querySelector(`#windowsMenu button[data-win="${key}"]`); const showing=w.classList.toggle('show'); if(btn) btn.classList.toggle('active', showing); if(key==='strategy' && showing){ buildStrategyUI(true); buildCaravansView(); } }
+export function toggleWindow(key){ const map={ cities:'win-cities', strategy:'win-strategy', upgrades:'win-upgrades'}; const id=map[key]; if(!id) return; const w=document.getElementById(id); if(!w) return; const btn=document.querySelector(`#windowsMenu button[data-win="${key}"]`); const showing=w.classList.toggle('show'); if(btn) btn.classList.toggle('active', showing); if(key==='strategy' && showing){ buildStrategyUI(true); buildCaravansView(); } if(key==='upgrades'&&showing){ buildUpgradesUI(true); } }
 
-let strategyBuilt=false; function buildStrategyUI(force=false){ if(strategyBuilt && !force) return; strategyBuilt=true; const grid=document.getElementById('strategyGrid'); if(!grid) return; grid.innerHTML=''; grid.insertAdjacentHTML('beforeend',`<div class=\"hdr\">${t('strategy.good')}</div><div class=\"hdr\">${t('strategy.buyLE')}</div><div class=\"hdr\">${t('strategy.sellGE')}</div><div class=\"hdr\">${t('strategy.range')}</div>`); const player=world.player; const goodsVisible=Object.keys(GOODS).filter(gid=> !player || player.unlockedGoods.includes(gid)); for(const gid of goodsVisible){ const g=GOODS[gid]; const row=document.createElement('div'); row.textContent=g.name; grid.appendChild(row); // BUY input
-  const buy=document.createElement('input'); buy.type='number'; buy.value=strategy.buyBelow[gid]; buy.className='strategy-num'; buy.addEventListener('change',()=>{ strategy.buyBelow[gid]=parseFloat(buy.value)||0; }); const buyWrap=document.createElement('div'); buyWrap.className='num-wrap'; buyWrap.appendChild(buy); const bStepper=document.createElement('div'); bStepper.className='stepper'; const bUp=document.createElement('button'); bUp.type='button'; bUp.textContent='▲'; const bDown=document.createElement('button'); bDown.type='button'; bDown.textContent='▼'; [bUp,bDown].forEach(btn=>{ btn.addEventListener('mousedown',e=>{ e.preventDefault(); }); }); bUp.addEventListener('click',()=>{ buy.stepUp(); buy.dispatchEvent(new Event('change')); }); bDown.addEventListener('click',()=>{ buy.stepDown(); buy.dispatchEvent(new Event('change')); }); bStepper.appendChild(bUp); bStepper.appendChild(bDown); buyWrap.appendChild(bStepper); grid.appendChild(buyWrap); // SELL input
-  const sell=document.createElement('input'); sell.type='number'; sell.value=strategy.sellAbove[gid]; sell.className='strategy-num'; sell.addEventListener('change',()=>{ strategy.sellAbove[gid]=parseFloat(sell.value)||0; }); const sellWrap=document.createElement('div'); sellWrap.className='num-wrap'; sellWrap.appendChild(sell); const sStepper=document.createElement('div'); sStepper.className='stepper'; const sUp=document.createElement('button'); sUp.type='button'; sUp.textContent='▲'; const sDown=document.createElement('button'); sDown.type='button'; sDown.textContent='▼'; [sUp,sDown].forEach(btn=>{ btn.addEventListener('mousedown',e=>{ e.preventDefault(); }); }); sUp.addEventListener('click',()=>{ sell.stepUp(); sell.dispatchEvent(new Event('change')); }); sDown.addEventListener('click',()=>{ sell.stepDown(); sell.dispatchEvent(new Event('change')); }); sStepper.appendChild(sUp); sStepper.appendChild(sDown); sellWrap.appendChild(sStepper); grid.appendChild(sellWrap); // range span
-  const span=document.createElement('div'); span.style.opacity='0.65'; span.style.fontSize='10px'; span.textContent=`${g.minPrice}-${g.maxPrice}`; grid.appendChild(span); } }
+// Shared tooltip for mode cycling (styled similarly to priceTooltip)
+let modeTooltip=document.getElementById('modeTooltip'); if(!modeTooltip){ modeTooltip=document.createElement('div'); modeTooltip.id='modeTooltip'; modeTooltip.style.position='fixed'; modeTooltip.style.pointerEvents='none'; modeTooltip.style.display='none'; document.body.appendChild(modeTooltip); }
+
+let strategyBuilt=false; function buildStrategyUI(force=false){ if(strategyBuilt && !force) return; strategyBuilt=true; const grid=document.getElementById('strategyGrid'); if(!grid) return; grid.innerHTML='';
+  // Headers: (mode icon blank) | Good | Buy <= | Sell >= | (auto blank)
+  grid.insertAdjacentHTML('beforeend',`<div class=\"hdr empty\"></div><div class=\"hdr\">${t('strategy.good')}</div><div class=\"hdr\">${t('strategy.buyLE')}</div><div class=\"hdr\">${t('strategy.sellGE')}</div><div class=\"hdr empty\"></div>`);
+  const player=world.player; const goodsVisible=Object.keys(GOODS).filter(gid=> !player || player.unlockedGoods.includes(gid));
+  const MODE_ORDER=['active','hold','liquidate','disabled'];
+  const MODE_ICONS={ active:'🟢', hold:'⏸️', liquidate:'💸', disabled:'🚫' };
+  const MODE_DESC={
+    active: t('strategy.modeDesc.active'),
+    hold: t('strategy.modeDesc.hold'),
+    liquidate: t('strategy.modeDesc.liquidate'),
+    disabled: t('strategy.modeDesc.disabled')
+  };
+  for(const gid of goodsVisible){ const g=GOODS[gid];
+    const curMode = strategy.mode?.[gid]||'active';
+    // MODE ICON cell
+    const modeCell=document.createElement('div'); modeCell.className='mode-cell';
+    const modeBtn=document.createElement('button'); modeBtn.type='button'; modeBtn.className='mode-btn'; modeBtn.dataset.mode=curMode; modeBtn.textContent=MODE_ICONS[curMode]||curMode[0].toUpperCase();
+    function buildModeTooltip(current, target){
+      let html=`<div class='mt-head'>${t('strategy.mode')||'Mode'}: ${t('strategy.modeVals.'+current)}</div>`;
+      html+='<div class="mt-list">';
+      for(const m of MODE_ORDER){ const icon=MODE_ICONS[m]; const name=t('strategy.modeVals.'+m); const desc=MODE_DESC[m]; const activeCls=m===current?' mt-current':''; html+=`<div class='mt-row${activeCls}'><span class='mt-ic'>${icon}</span><div class='mt-text'><div class='mt-name'>${name}</div><div class='mt-desc'>${desc}</div></div></div>`; }
+      html+='</div><div class="mt-foot">'+t('ui.clickCycle')+'</div>';
+      modeTooltip.innerHTML=html; const rect=target.getBoundingClientRect(); modeTooltip.style.left=(rect.left+window.scrollX+rect.width+8)+'px'; modeTooltip.style.top=(rect.top+window.scrollY)+'px'; modeTooltip.style.display='block';
+    }
+    modeBtn.addEventListener('click',()=>{ const current=strategy.mode[gid]||'active'; const idx=MODE_ORDER.indexOf(current); const next=MODE_ORDER[(idx+1)%MODE_ORDER.length]; strategy.mode[gid]=next; buildStrategyUI(true); });
+    modeBtn.addEventListener('mouseenter',()=>{ buildModeTooltip(strategy.mode?.[gid]||'active', modeBtn); });
+    modeBtn.addEventListener('mouseleave',()=>{ modeTooltip.style.display='none'; });
+    modeBtn.addEventListener('mousemove',()=>{ if(modeTooltip.style.display==='block'){ const rect=modeBtn.getBoundingClientRect(); modeTooltip.style.left=(rect.left+rect.width+8)+'px'; modeTooltip.style.top=(rect.top)+'px'; } });
+    modeCell.appendChild(modeBtn); grid.appendChild(modeCell);
+    // GOOD NAME cell
+    const nameCell=document.createElement('div'); nameCell.className='good-name-cell'; nameCell.textContent=g.name; grid.appendChild(nameCell);
+    // BUY input
+    const buy=document.createElement('input'); buy.type='number'; buy.value=strategy.buyBelow[gid]; buy.className='strategy-num'; buy.addEventListener('change',()=>{ strategy.buyBelow[gid]=parseFloat(buy.value)||0; }); const buyWrap=document.createElement('div'); buyWrap.className='num-wrap'; buyWrap.appendChild(buy); const bStepper=document.createElement('div'); bStepper.className='stepper'; const bUp=document.createElement('button'); bUp.type='button'; bUp.textContent='▲'; const bDown=document.createElement('button'); bDown.type='button'; bDown.textContent='▼'; [bUp,bDown].forEach(btn=>{ btn.addEventListener('mousedown',e=>{ e.preventDefault(); }); }); bUp.addEventListener('click',()=>{ buy.stepUp(); buy.dispatchEvent(new Event('change')); }); bDown.addEventListener('click',()=>{ buy.stepDown(); buy.dispatchEvent(new Event('change')); }); bStepper.appendChild(bUp); bStepper.appendChild(bDown); buyWrap.appendChild(bStepper); grid.appendChild(buyWrap);
+    // SELL input
+    const sell=document.createElement('input'); sell.type='number'; sell.value=strategy.sellAbove[gid]; sell.className='strategy-num'; sell.addEventListener('change',()=>{ strategy.sellAbove[gid]=parseFloat(sell.value)||0; }); const sellWrap=document.createElement('div'); sellWrap.className='num-wrap'; sellWrap.appendChild(sell); const sStepper=document.createElement('div'); sStepper.className='stepper'; const sUp=document.createElement('button'); sUp.type='button'; sUp.textContent='▲'; const sDown=document.createElement('button'); sDown.type='button'; sDown.textContent='▼'; [sUp,sDown].forEach(btn=>{ btn.addEventListener('mousedown',e=>{ e.preventDefault(); }); }); sUp.addEventListener('click',()=>{ sell.stepUp(); sell.dispatchEvent(new Event('change')); }); sDown.addEventListener('click',()=>{ sell.stepDown(); sell.dispatchEvent(new Event('change')); }); sStepper.appendChild(sUp); sStepper.appendChild(sDown); sellWrap.appendChild(sStepper); grid.appendChild(sellWrap);
+    // AUTO button
+    const autoCell=document.createElement('div'); autoCell.className='auto-cell';
+    const autoBtn=document.createElement('button'); autoBtn.type='button'; autoBtn.className='auto-btn'; autoBtn.textContent='🛠️'; autoBtn.title=(t('strategy.profitTip')||'Auto set buy/sell thresholds for a sensible profit range')+`\n${t('strategy.priceRange')||'Range'}: ${g.minPrice}-${g.maxPrice}`; autoBtn.addEventListener('click',()=>{ const {buy:pb,sell:ps}=suggestProfitThresholds(world,gid); strategy.buyBelow[gid]=pb; strategy.sellAbove[gid]=ps; buildStrategyUI(true); }); autoCell.appendChild(autoBtn); grid.appendChild(autoCell);
+    // Disable inputs based on mode
+    const mode=strategy.mode?.[gid]||'active'; if(mode==='hold'||mode==='disabled'){ buy.disabled=true; sell.disabled=true; bStepper.querySelectorAll('button').forEach(b=>b.disabled=true); sStepper.querySelectorAll('button').forEach(b=>b.disabled=true); autoBtn.disabled=true; }
+    if(mode==='liquidate'){ buy.disabled=true; bStepper.querySelectorAll('button').forEach(b=>b.disabled=true); }
+  }
+}
 
 function formatFlow(city,gid){ const f=city.flows[gid]; if(!f) return ''; const net=(f.prod-f.cons).toFixed(1); return `${net}`; }
 
@@ -39,21 +83,24 @@ function buildCaravansView(force=false){
   const now=performance.now();
   if(!force && (now - caravansLastBuild) < CARAVANS_BUILD_INTERVAL){ return; }
   caravansLastBuild=now;
-  const capPerCamel=10; let html='';
+  let html='';
   const player=world.player;
   const camelBaseCost = camelCost(world);
   const caravanBuyCost = caravanCost(world);
   for(const c of world.caravans){
-  const destName=c.destCity ? (world.cities.find(ct=>ct.id===c.destCity)?.name||'?') : '—';
+  const destCityObj = c.destCity ? world.cities.find(ct=>ct.id===c.destCity): null;
+  const destName= destCityObj ? destCityObj.name : '—';
+  // Destination tag intentionally not shown in caravan management per new requirements.
+  const destTag = ''; // (previously displayed city tag)
   const state=t('caravan.state.'+c.state);
     const used=Object.values(c.cargo).reduce((a,b)=>a+(b.qty||0),0);
-    const cap=c.camels*capPerCamel;
+  const cap=caravanCapacity(c, world);
   const camelLimit = (player?.maxCamelsPerCaravan||1);
   let btnDisabled=false; let btnTitle=`${t('btn.addCamel')} (${PRICE_SYMBOL}${camelBaseCost})`;
   if(c.camels >= camelLimit){ btnDisabled=true; btnTitle=t('level.camelLimit',{n:camelLimit}); }
   else if(world.money < camelBaseCost){ btnDisabled=true; btnTitle=t('caravan.addCamelNoMoney',{cost:camelBaseCost}); }
   const addCamelBtn = `<button class=\"add-camel\" data-car=\"${c.id}\" title=\"${btnTitle}\" ${btnDisabled?'disabled':''}>+🐪 ${PRICE_SYMBOL}${camelBaseCost}</button>`;
-  html+=`<div class=\"car\"><div class=\"car-head\"><b>#${c.id}</b> ${state} ${addCamelBtn}</div><div>${t('caravan.target')}: ${destName}</div><div>${t('caravan.camels')}: ${c.camels}</div><div>${t('caravan.filled')}: ${used}/${cap}</div>`;
+  html+=`<div class=\"car\"><div class=\"car-head\"><b>${c.name||('#'+c.id)}</b> ${state} ${addCamelBtn}</div><div>${t('caravan.target')}: ${destName}${destTag}</div><div>${t('caravan.camels')}: ${c.camels}</div><div>${t('caravan.filled')}: ${used}/${cap}</div>`;
     html+='<div class=\"cargo\">';
     for(const gid of Object.keys(GOODS)){
       if(world.player && !world.player.unlockedGoods.includes(gid)) continue;
@@ -77,9 +124,9 @@ function buildCaravansView(force=false){
       const logEl=document.getElementById('log');
       function uiLog(m){ if(!logEl) return; const div=document.createElement('div'); div.className='entry'; div.textContent=m; logEl.appendChild(div); logEl.scrollTop=logEl.scrollHeight; }
       const limit=(world.player?.maxCamelsPerCaravan||1);
-      if(car.camels>=limit){ if(window.DEBUG_CAMEL) console.log('[AddCamel] Reached camel limit', {carId:car.id, camels:car.camels, limit}); uiLog(t('caravan.addCamelLimit',{id:car.id})); return; }
+  if(car.camels>=limit){ if(window.DEBUG_CAMEL) console.log('[AddCamel] Reached camel limit', {carId:car.id, camels:car.camels, limit}); uiLog(t('caravan.addCamelLimit',{id:car.id, name:(car.name||('#'+car.id))})); return; }
       const costNow = camelCost(world);
-      if(world.money<costNow){ if(window.DEBUG_CAMEL) console.log('[AddCamel] Not enough money', {money:world.money, costNow}); uiLog(t('caravan.addCamelNoMoney',{cost:costNow})); return; }
+  if(world.money<costNow){ if(window.DEBUG_CAMEL) console.log('[AddCamel] Not enough money', {money:world.money, costNow}); uiLog(t('caravan.addCamelNoMoney',{cost:costNow, name:(car.name||('#'+car.id))})); return; }
       const beforeMoney=world.money; const beforeCamels=car.camels;
       world.money-=costNow;
       car.camels++;
@@ -87,7 +134,7 @@ function buildCaravansView(force=false){
       if(car.camelTrail){ car.camelTrail.push({offset:(car.camelTrail.length)*2.2, x:car.x, z:car.z, y:car.y||0, yaw:car.yaw||0, phase:Math.random()*Math.PI*2}); }
       if(world.player){ world.player.totalCamelsPurchased=(world.player.totalCamelsPurchased||0)+1; }
       if(window.DEBUG_CAMEL){ console.log('[AddCamel] Success', {carId:car.id, beforeCamels, afterCamels:car.camels, beforeMoney, afterMoney:world.money, cost:costNow}); }
-      uiLog(t('caravan.addCamelAdded',{id:car.id, count:car.camels}));
+  uiLog(t('caravan.addCamelAdded',{id:car.id, name:(car.name||('#'+car.id)), count:car.camels}));
       // Force immediate rebuild to update disabled state
       buildCaravansView(true);
     });
@@ -118,7 +165,14 @@ export function updateUI(){
   const curHave = p.xp - prevReq;
   const pct = curReqTotal>0? Math.min(100, Math.max(0, (curHave/curReqTotal)*100)):0;
   const bar = `<div style=\"margin:4px 0 6px; background:#2a333c; height:10px; border-radius:6px; overflow:hidden; box-shadow:0 0 0 1px #3d4a55 inset;\"><div style=\"height:100%; width:${pct.toFixed(1)}%; background:linear-gradient(90deg,#d0a84c,#f0d074); box-shadow:0 0 4px #d0a84c99;\"></div></div>`;
-  const stats=document.getElementById('stats'); if(stats) stats.innerHTML = `Money: ${Math.floor(world.money)}<br/>Level: ${p.level}<br/>XP: ${curHave.toFixed(0)}/${curReqTotal.toFixed(0)}${bar}Total Profit: ${world.totalProfit.toFixed(0)}<br/>Last Trade: ${world.lastTradeProfit.toFixed(0)}<br/>${fmtDay()}<br/>${world.paused?'<b>PAUSED</b>':''}`;
+  // Build upgrade-derived stat badges
+  const st=p.upgradeStats||{}; const badges=[];
+  if(st.cargoBonusPct) badges.push(`<span class=\"stat-badge\">Cargo +${Math.round(st.cargoBonusPct*100)}%</span>`);
+  if(st.sellBonus||st.buyDiscount) badges.push(`<span class=\"stat-badge\">Price +${Math.round((st.sellBonus||0)*100)}%/-${Math.round((st.buyDiscount||0)*100)}%</span>`);
+  if(st.speedBonus) badges.push(`<span class=\"stat-badge\">Speed +${Math.round(st.speedBonus*100)}%</span>`);
+  if(st.camelLossMitigation) badges.push(`<span class=\"stat-badge\">Camel -${Math.round(st.camelLossMitigation*100)}%</span>`);
+  // bandit mitigation removed
+  const stats=document.getElementById('stats'); if(stats) stats.innerHTML = `${t('stats.money')}: ${Math.floor(world.money)}<br/>${t('stats.level')}: ${p.level}<br/>${t('stats.xp')||'XP'}: ${curHave.toFixed(0)}/${curReqTotal.toFixed(0)}${bar}${t('stats.totalProfit')}: ${world.totalProfit.toFixed(0)}<br/>${t('stats.lastTrade')}: ${world.lastTradeProfit.toFixed(0)}<br/>${badges.length?('<div class=\"stat-badges\">'+badges.join('')+'</div>'):''}${t('stats.day')||'Day'}: ${fmtDay()}<br/>${world.paused?('<b>'+t('stats.paused')+'</b>'):''}`;
   } else {
   const stats=document.getElementById('stats'); if(stats) stats.innerHTML = `Money: ${Math.floor(world.money)}<br/>Total Profit: ${world.totalProfit.toFixed(0)}<br/>Last Trade: ${world.lastTradeProfit.toFixed(0)}<br/>${fmtDay()}<br/>${world.paused?'<b>PAUSED</b>':''}`;
   }
@@ -163,7 +217,9 @@ export function updateUI(){
         for(const city of world.cities){
           if(city.locked) continue;
           updateCityPrices(city);
-          html+=`<div class=\"city\"><b>${city.name}</b><br/><span style=\"opacity:.55;font-size:10px;\">${city.role} / ${city.focus}</span><div class=\"goods\">`;
+          const tagLine = city.tag? `<span class=\"city-tag\" style=\"opacity:.70;font-size:10px;display:inline-block;margin-top:2px;\">${city.tag}</span>`: '';
+          // Display city name on first line; second line shows tag (replaces previous role/focus display)
+          html+=`<div class=\"city\"><b>${city.name}</b><br/>${tagLine}<div class=\"goods\">`;
           for(const gid of Object.keys(GOODS)){
             if(world.player && !world.player.unlockedGoods.includes(gid)) continue;
             const price=city.prices[gid]; const stock=city.stocks[gid]; const f=city.flows[gid]; const net=(f.prod-f.cons); const gdef=GOODS[gid];
@@ -194,5 +250,68 @@ export function updateUI(){
       }
     }
   }
+  // Upgrades window refresh
+  if(document.getElementById('win-upgrades')?.classList.contains('show')){
+    if(world.__needsUpgradesRefresh){ buildUpgradesUI(true); world.__needsUpgradesRefresh=false; }
+    else buildUpgradesUI();
+  }
   // caravans merged into strategy window
+}
+
+let upgradesBuilt=false; let upgradesLastBuild=0; const UPGRADES_BUILD_INTERVAL=500;
+function buildUpgradesUI(force=false){
+  const el=document.getElementById('upgradesView'); if(!el) return;
+  const now=performance.now(); if(!force && (now - upgradesLastBuild) < UPGRADES_BUILD_INTERVAL) return; upgradesLastBuild=now;
+  const p=world.player; if(!p) { el.innerHTML='<i>—</i>'; return; }
+  let html='';
+  html+='<div class="upg-hint">'+t('upg.hint')+'</div>';
+  for(const key of Object.keys(UPGRADE_DEFS)){
+    const def=UPGRADE_DEFS[key]; const owned=p.upgrades[key]||0; const max=def.max; const {ok, reason, cost}=canPurchaseUpgrade(world, key);
+    // Hide upgrades not yet available by level (except always show camelLimit as the introductory one)
+    if(owned<1 && key!=='camelLimit'){
+      // Determine first required level (for l=0)
+      if(typeof def.levelReq==='function' && !def.levelReq(p,0)){
+        // Skip rendering entirely until first level requirement met
+        continue;
+      }
+    }
+    let status='';
+    if(owned>=max) status=t('upg.max');
+    else if(!ok){
+      if(reason==='level'){
+        // Find next required level by incrementing l until requirement satisfied
+        let needed=null; for(let testL=owned; testL<max; testL++){ if(def.levelReq && def.levelReq(p,testL)){ needed=null; break; } else { const reqLevelGuess = (()=>{ // brute force search for first level satisfying def.levelReq(p,testL)
+              for(let L=p.level; L<=p.level+40; L++){ if(def.levelReq && def.levelReq({...p, level:L}, testL)) return L; }
+              return '?'; })(); needed=reqLevelGuess; break; } }
+        const reqShown = needed!=null? needed: (p.level+1);
+        status=t('upg.needLevel',{lvl:reqShown});
+      }
+      else if(reason==='money') status=t('upg.needMoney',{cost});
+      else status='';
+    }
+    const name=t(def.nameKey);
+    const desc=t(def.descKey);
+    const nextCost = owned<max? nextUpgradeCost(key, owned): null;
+    const pct=(owned/max)*100; const tierClass = pct>=80? 'tier-high': (pct>=50? 'tier-mid':'tier-base');
+  let effectNext='';
+  if(key==='cargoHarness'){ effectNext = t('upg.fx.cargoHarness',{cur:owned*12,next:Math.min(owned+1,max)*12}); }
+  else if(key==='haggling'){ effectNext = t('upg.fx.haggling',{curSell:owned*2, curBuy:owned*2, nextSell:Math.min(owned+1,max)*2, nextBuy:Math.min(owned+1,max)*2}); }
+  else if(key==='caravanSpeed'){ effectNext = t('upg.fx.caravanSpeed',{cur:owned*6,next:Math.min(owned+1,max)*6}); }
+  else if(key==='camelCare'){ effectNext = t('upg.fx.camelCare',{cur:owned*15,next:Math.min(owned+1,max)*15}); }
+  else if(key==='camelLimit'){ effectNext = t('upg.fx.camelLimit',{cur:1+owned,next:Math.min(1+owned+1,1+max)}); }
+  else if(key==='caravanSlots'){ effectNext = t('upg.fx.caravanSlots',{cur:1+owned,next:Math.min(1+owned+1,1+max)}); }
+    html+=`<div class=\"upg ${tierClass}\"><div class=\"upg-h\">${def.icon} <b>${name}</b> <span class=\"lvl\">${owned}/${max}</span></div><div class=\"upg-bar\"><span style=\"width:${pct.toFixed(1)}%\"></span></div><div class=\"upg-d\">${desc}<div class=\"upg-eff\">${effectNext}</div></div><div class=\"upg-a\">`;
+    if(owned<max){
+      html+=`<button data-upg=\"${key}\" ${ok?'':'disabled'} title=\"${effectNext}\">${t('upg.buy')} ${nextCost?('('+PRICE_SYMBOL+nextCost+')'):''}</button>`;
+    } else {
+      html+=`<span class=\"upg-max\">${t('upg.max')}</span>`;
+    }
+    if(status) html+=`<div class=\"upg-status\">${status}</div>`;
+    html+='</div></div>';
+  }
+  el.innerHTML=html;
+  if(!upgradesBuilt){
+    upgradesBuilt=true;
+    el.addEventListener('click', e=>{ const b=e.target.closest('button[data-upg]'); if(!b) return; const key=b.getAttribute('data-upg'); purchaseUpgrade(world, key); buildUpgradesUI(true); });
+  }
 }

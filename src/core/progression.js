@@ -9,6 +9,7 @@
 
 import { adjustCityVisuals, spawnCityVisualsIfNeeded } from '../world/world.js';
 import { t } from '../core/i18n.js';
+import { initUpgrades } from './upgrades.js';
 
 export function initProgression(world){
   if(world.player) return world.player; // already
@@ -23,6 +24,8 @@ export function initProgression(world){
     unlockQueue:buildUnlockQueue(world),
   };
   world.player = player;
+  // Initialize upgrades subsystem
+  initUpgrades(world);
   // Lock all but first two cities (game starts with 2 cities visible)
   world.cities.forEach((c,i)=>{ c.locked = i>1; });
   return player;
@@ -33,37 +36,33 @@ function buildUnlockQueue(world){
   // Sizes target: two tiny (initial + next), then grow earlier ones: small, medium, and finally one large city (only one large).
   // We interleave with camel/caravan/goods unlocks.
   const actions = [];
-  const camelUp = (w,p)=>{ if(p.maxCamelsPerCaravan<6){ p.maxCamelsPerCaravan++; return t('level.camelLimit',{n:p.maxCamelsPerCaravan}); } return null; };
-  const caravanUp = (w,p)=>{ if(p.maxCaravans<6){ p.maxCaravans++; return t('level.caravanLimit',{n:p.maxCaravans}); } return null; };
+  // Camel / caravan limits moved to upgrades system.
+  const camelUp = ()=> null;
+  const caravanUp = ()=> null;
 
-  // Level 2: camel capacity
-  actions[2] = camelUp;
+  // Level 2 previously camel capacity -> now empty (upgrades)
+  actions[2] = null;
   // Level 3: third city (first locked one)
   actions[3] = unlockCity;
-  // Level 4: camel capacity
-  actions[4] = camelUp;
+  actions[4] = null;
   // Level 5: unlock cloth
   actions[5] = (w,p)=> unlockGood(w,p,'cloth');
-  // Level 6: caravan slot
-  actions[6] = caravanUp;
+  actions[6] = null;
   // Level 7: unlock fourth city
   actions[7] = unlockCity;
   // Level 8: first growth (tiny->small)
   actions[8] = (w,p)=>{ upgradeCitySize(w); return t('level.cityGrew1'); };
-  // Level 9: camel
-  actions[9] = camelUp;
+  actions[9] = null;
   // Level 10: unlock fifth city
   actions[10] = unlockCity;
   // Level 11: upgrade (toward medium)
   actions[11] = (w,p)=>{ upgradeCitySize(w); return t('level.cityGrew2'); };
   // Level 12: unlock ore
   actions[12] = (w,p)=> unlockGood(w,p,'ore');
-  // Level 13: caravan
-  actions[13] = caravanUp;
+  actions[13] = null;
   // Level 14: unlock sixth (final) city
   actions[14] = unlockCity;
-  // Level 15: camel
-  actions[15] = camelUp;
+  actions[15] = null;
   // Level 16: upgrade (promote toward large)
   actions[16] = (w,p)=>{ upgradeCitySize(w); return t('level.cityGrowth'); };
   // Level 17: final upgrade to large
